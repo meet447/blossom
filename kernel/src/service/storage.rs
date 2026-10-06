@@ -174,6 +174,8 @@ pub fn note_report(task: u64, ptr: u64, len: u64) {
         if let Ok(text) = core::str::from_utf8(&bytes[..len as usize]) {
             if text.starts_with("mac=") {
                 crate::kprintln!("meuxe: net {text}");
+            } else if text.starts_with("prep=") {
+                crate::kprintln!("meuxe: net {text}");
             } else {
                 crate::kprintln!("meuxe: {text}");
             }

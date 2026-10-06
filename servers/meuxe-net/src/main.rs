@@ -27,6 +27,7 @@ const NET_VECTOR: u64 = 36;
 const TIMER_VECTOR: u64 = 32;
 const RPC_TAG: u64 = 8;
 static mut RPC_PHASE: u8 = 0;
+static mut OUT: [u8; 1600] = [0; 1600];
 const ACKNOWLEDGE: u8 = 1;
 const DRIVER: u8 = 2;
 const DRIVER_OK: u8 = 4;
@@ -84,8 +85,8 @@ extern "C" fn main() -> ! {
     let mut pending_rpc = false;
     let mut rpc_op = 0u32;
     let mut tcp_logged = false;
-    let mut out = [0u8; 1600];
     loop {
+        let out = unsafe { &mut *core::ptr::addr_of_mut!(OUT) };
         syscall(SYS_RING_PROCESS, 0, 0);
         while let Some(entry) = ring().cq.pop() {
             if entry.user_data == RPC_TAG && entry.result == 0 {
@@ -120,7 +121,7 @@ extern "C" fn main() -> ! {
             posted = false;
         }
 
-        drain_rx(&mut dev, &mut stack, &mut out);
+        drain_rx(&mut dev, &mut stack, out);
         drain_tx(&mut dev);
 
         if pending_rpc {
@@ -128,7 +129,7 @@ extern "C" fn main() -> ! {
                 boot,
                 &mut dev,
                 &mut stack,
-                &mut out,
+                out,
                 rpc_op,
                 &mut tcp_logged,
             ) {
@@ -137,7 +138,7 @@ extern "C" fn main() -> ! {
             }
         }
 
-        if let Some(n) = stack_tick(boot, &mut stack, &mut out) {
+        if let Some(n) = stack_tick(boot, &mut stack, out) {
             transmit(&mut dev, &out[..n]);
         }
 
@@ -309,23 +310,36 @@ fn write_hex_byte(dst: &mut [u8], byte: u8) -> usize {
 fn prepare(boot: &NetBoot, dev: &mut Dev) -> Option<[u8; 6]> {
     let common = dev.common;
     write8(common, 0x14, 0);
+    let mut reset = false;
     for _ in 0..100_000 {
         if read8(common, 0x14) == 0 {
+            reset = true;
             break;
         }
+    }
+    if !reset {
+        fail(b"prep=rst");
+        return None;
     }
     write8(common, 0x14, ACKNOWLEDGE);
     write8(common, 0x14, ACKNOWLEDGE | DRIVER);
     write32(common, 0x00, 1);
     if read32(common, 0x04) & VERSION_1 == 0 {
+        fail(b"prep=v1");
         return None;
     }
-    write32(common, 0x08, 0);
+    write32(common, 0x08, 1);
     write32(common, 0x0c, VERSION_1);
     write32(common, 0x08, 0);
     write32(common, 0x0c, 0);
     write8(common, 0x14, ACKNOWLEDGE | DRIVER | FEATURES_OK);
+    for _ in 0..100_000 {
+        if read8(common, 0x14) & FEATURES_OK != 0 {
+            break;
+        }
+    }
     if read8(common, 0x14) & FEATURES_OK == 0 {
+        fail(b"prep=feat");
         return None;
     }
 
@@ -336,11 +350,20 @@ fn prepare(boot: &NetBoot, dev: &mut Dev) -> Option<[u8; 6]> {
         }
     }
 
-    if !setup_queue(dev, 0, true) || !setup_queue(dev, 1, false) {
+    if !setup_queue(dev, 0, true) {
+        fail(b"prep=rx");
+        return None;
+    }
+    if !setup_queue(dev, 1, false) {
+        fail(b"prep=tx");
         return None;
     }
     write8(common, 0x14, ACKNOWLEDGE | DRIVER | FEATURES_OK | DRIVER_OK);
     Some(mac)
+}
+
+fn fail(code: &[u8]) {
+    syscall(SYS_REPORT, code.as_ptr() as u64, code.len() as u64);
 }
 
 fn setup_queue(dev: &Dev, index: u16, rx: bool) -> bool {
@@ -360,7 +383,7 @@ fn setup_queue(dev: &Dev, index: u16, rx: bool) -> bool {
         return false;
     }
     write16(common, 0x1c, 1);
-    let base_page = if rx { 2u64 } else { 10u64 };
+    let base_page = if rx { 2u64 } else { 4u64 };
     for slot in 0..dev.queue_size as u64 {
         let buf_virt = dev.dma_virt + (base_page + slot) * 4096;
         let buf_phys = dev.dma_phys[(base_page + slot) as usize];
@@ -374,8 +397,8 @@ fn setup_queue(dev: &Dev, index: u16, rx: bool) -> bool {
         fence(Ordering::SeqCst);
         write16(q + AVAIL, 2, dev.queue_size);
         fence(Ordering::SeqCst);
+        notify(dev, 0);
     }
-    notify(dev, index);
     true
 }
 
@@ -438,7 +461,7 @@ fn transmit(dev: &Dev, frame: &[u8]) {
     let avail = dev.tx_queue + AVAIL;
     let head = read16(avail, 2);
     let id = (head % dev.queue_size) as u64;
-    let buf = dev.dma_virt + (10 + id) * 4096;
+    let buf = dev.dma_virt + (4 + id) * 4096;
     unsafe {
         for index in 0..NET_HDR {
             ((buf + index as u64) as *mut u8).write_volatile(0);
@@ -450,7 +473,7 @@ fn transmit(dev: &Dev, frame: &[u8]) {
     write_desc(
         dev.tx_queue,
         id,
-        dev.dma_phys[(10 + id) as usize],
+        dev.dma_phys[(4 + id) as usize],
         (NET_HDR + frame.len()) as u32,
         0,
         0,

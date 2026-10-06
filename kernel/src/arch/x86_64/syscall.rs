@@ -3,6 +3,7 @@
 use super::cpu;
 use super::percpu;
 use crate::ipc;
+use crate::task;
 use core::arch::global_asm;
 use core::sync::atomic::{AtomicU64, Ordering};
 
@@ -15,7 +16,6 @@ const EFER_SCE: u64 = 1;
 
 static YIELD_STATUS: AtomicU64 = AtomicU64::new(u64::MAX);
 static YIELD_TASK: AtomicU64 = AtomicU64::new(0);
-
 extern "C" {
     fn syscall_entry();
 }

@@ -84,7 +84,7 @@ pub fn start() -> Result<(), &'static str> {
         notify,
         device: device_va,
         notify_mul: device.notify_mul,
-        queue_size: 8,
+        queue_size: 2,
         dma_phys,
         dma_virt: USER_NET_DMA,
         share_phys: share,
@@ -139,8 +139,8 @@ fn install_caps(share: u64, mmio_phys: u64) -> Result<(), &'static str> {
         if net_ep.raw() != 1 || client_ep.raw() != 4 {
             return Err("net endpoint handles are not 1 and 4");
         }
-        if mmio_handle.raw() != 2 {
-            return Err("net mmio handle is not 2");
+        if mmio_handle.raw() != 3 {
+            return Err("net mmio handle is not 3");
         }
         crate::kprintln!("meuxe: irq cap task={} vector=36", task::NET);
         Ok(())

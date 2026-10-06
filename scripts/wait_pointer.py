@@ -170,6 +170,8 @@ def qcodes(text: str):
             keys.append("spc")
         elif ch == "/":
             keys.append("slash")
+        elif ch == ".":
+            keys.append("dot")
         elif "a" <= ch <= "z":
             keys.append(ch)
         elif ch.isdigit():
