@@ -18,6 +18,8 @@ members = [
     "servers/meuxe-files",
     "servers/meuxe-calc",
     "servers/meuxe-input",
+    "servers/meuxe-hello",
+    "servers/meuxe-fault",
     "kernel",
 ]
 

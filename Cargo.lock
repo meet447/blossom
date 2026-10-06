@@ -55,6 +55,14 @@ name = "meuxe-elf"
 version = "0.1.0"
 
 [[package]]
+name = "meuxe-fault"
+version = "0.1.0"
+dependencies = [
+ "meuxe-abi",
+ "meuxe-rt",
+]
+
+[[package]]
 name = "meuxe-files"
 version = "0.1.0"
 dependencies = [
@@ -70,6 +78,14 @@ version = "0.1.0"
 [[package]]
 name = "meuxe-fs"
 version = "0.1.0"
+
+[[package]]
+name = "meuxe-hello"
+version = "0.1.0"
+dependencies = [
+ "meuxe-abi",
+ "meuxe-rt",
+]
 
 [[package]]
 name = "meuxe-input"

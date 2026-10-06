@@ -35,6 +35,13 @@ pub fn yield_once() {
     syscall(meuxe_abi::SYS_YIELD, 0, task);
 }
 
+pub fn exit(code: u32) -> ! {
+    syscall(meuxe_abi::SYS_EXIT, code as u64, 0);
+    loop {
+        core::hint::spin_loop();
+    }
+}
+
 #[panic_handler]
 fn panic(_info: &PanicInfo) -> ! {
     loop {

@@ -39,6 +39,8 @@ const OP_MKDIR: u32 = 5;
 const OP_UNLINK: u32 = 6;
 const OP_RENAME: u32 = 7;
 const OP_DF: u32 = 8;
+const READ_BULK: u32 = 1 << 31;
+const BULK_MAX: usize = 3584;
 const BLK_REQUEST: u64 = 1;
 const STORE_TAG: u64 = 5;
 const REPLY_TAG: u64 = 4;
@@ -238,21 +240,47 @@ fn answer(page: u64) {
     }
     let flags = read_u32(page, 116);
     let mut out = [0u8; 48];
-    let out_len = dispatch(
-        op,
-        &path[..path_len],
-        &aux[..aux_len],
-        &data[..data_len],
-        flags,
-        &mut out,
-    );
-    for index in 0..out_len {
-        write_u8(page, 32 + index, out[index]);
+    let out_len = if op == OP_READ && flags & READ_BULK != 0 {
+        let offset = flags & !READ_BULK;
+        let mut bulk = [0u8; BULK_MAX];
+        let n = dispatch_read(
+            &path[..path_len],
+            offset,
+            &mut bulk,
+            BULK_MAX,
+        );
+        for index in 0..n {
+            write_u8(page, 512 + index, bulk[index]);
+        }
+        n
+    } else {
+        dispatch(
+            op,
+            &path[..path_len],
+            &aux[..aux_len],
+            &data[..data_len],
+            flags,
+            &mut out,
+        )
+    };
+    if op != OP_READ || flags & READ_BULK == 0 {
+        for index in 0..out_len {
+            write_u8(page, 32 + index, out[index]);
+        }
     }
     write_u32(page, 28, out_len as u32);
     fence(Ordering::SeqCst);
     write_u32(page, 24, 1);
     fence(Ordering::SeqCst);
+}
+
+fn dispatch_read(path: &[u8], offset: u32, out: &mut [u8], max: usize) -> usize {
+    let volume = vol();
+    let limit = max.min(out.len());
+    match volume.read_at(path, offset as u64, &mut out[..limit]) {
+        Ok(n) => n,
+        Err(_) => 0,
+    }
 }
 
 fn dispatch(
@@ -266,7 +294,7 @@ fn dispatch(
     let volume = vol();
     let result = match op {
         OP_LIST => volume.list(path, out).map(|len| len.min(out.len())),
-        OP_READ => volume.read_at(path, 0, out),
+        OP_READ => volume.read_at(path, flags as u64, out),
         OP_WRITE => {
             let bits = if flags == 0 { CREATE | TRUNC } else { flags };
             match volume.write_at(path, 0, data, bits) {

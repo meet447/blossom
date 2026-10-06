@@ -19,6 +19,7 @@ const KIND_FREE: u8 = 0;
 const KIND_IDLE: u8 = 1;
 const KIND_KERNEL: u8 = 2;
 const KIND_USER: u8 = 3;
+const KIND_ZOMBIE: u8 = 4;
 const QUANTUM: u64 = 3;
 
 static TICKS: AtomicU64 = AtomicU64::new(0);
@@ -119,6 +120,10 @@ pub fn spawn_user() {
         TASKS[USER_STUB as usize].kstack_top = top;
     }
     enqueue_on(0, USER_STUB);
+}
+
+pub fn user_cr3(id: u8) -> u64 {
+    task_cr3(id)
 }
 
 pub fn spawn_user_elf(id: u8, entry: u64, cr3: u64) {
@@ -336,5 +341,52 @@ fn take(cpu: usize, for_cpu: usize) -> Option<u8> {
 }
 
 fn allows(id: u8, cpu: usize) -> bool {
+    let kind = unsafe { TASKS[id as usize].kind };
+    if kind == KIND_ZOMBIE || kind == KIND_FREE {
+        return false;
+    }
     unsafe { TASKS[id as usize].affinity & (1u64 << cpu) != 0 }
+}
+
+pub fn retire(id: u8) {
+    unsafe {
+        TASKS[id as usize].kind = KIND_ZOMBIE;
+    }
+    purge_queues(id);
+}
+
+fn purge_queues(id: u8) {
+    for cpu in 0..2 {
+        if !percpu::try_lock_queue(cpu) {
+            continue;
+        }
+        unsafe {
+            let block = percpu::ptr(cpu);
+            let len = (*block).queue_len as usize;
+            let mut write = 0;
+            for read in 0..len {
+                let queued = (*block).queue[read];
+                if queued != id {
+                    (*block).queue[write] = queued;
+                    write += 1;
+                }
+            }
+            (*block).queue_len = write as u64;
+        }
+        percpu::unlock_queue(cpu);
+    }
+}
+
+pub fn park_current() -> ! {
+    let cpu = percpu::this();
+    let current = unsafe { (*cpu).current_task as u8 };
+    retire(current);
+    unsafe {
+        (*cpu).yield_requested.store(1, Ordering::Release);
+    }
+    loop {
+        cpu::sti();
+        cpu::hlt();
+        cpu::cli();
+    }
 }

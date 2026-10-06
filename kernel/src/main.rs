@@ -23,6 +23,7 @@ mod ipc;
 mod log;
 mod mm;
 mod panic;
+mod proc;
 mod sched;
 mod service;
 mod sync;

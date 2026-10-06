@@ -10,11 +10,19 @@ use core::arch::global_asm;
 use core::cell::UnsafeCell;
 use core::sync::atomic::{fence, Ordering};
 use meuxe_abi::{
-    pack_rect, ClientBoot, SubmissionEntry, ERR_AGAIN, RESULT_OK, SYS_REPORT, SYS_RING_PROCESS, TERM_ACCENT,
-    TERM_BG, TERM_COLS, TERM_FG, TERM_ROWS, USER_FS, USER_INFO, WINDOW_COLOR, SQ_OPCODE_RECV,
-    SQ_OPCODE_SEND,
+    pack_rect, ClientBoot, SubmissionEntry, ERR_AGAIN, ERR_FAULT, RESULT_OK, SYS_REPORT, SYS_RING_PROCESS,
+    SYS_SPAWN, TERM_ACCENT, TERM_BG, TERM_COLS, TERM_FG, TERM_ROWS, USER_FS, USER_IMAGE,
+    USER_INFO, WINDOW_COLOR, SQ_OPCODE_RECV, SQ_OPCODE_SEND,
 };
 use meuxe_rt::{ring, syscall, yield_once, RING};
+
+fn trim_ascii_end(slice: &[u8]) -> &[u8] {
+    let mut end = slice.len();
+    while end > 0 && (slice[end - 1] == b' ' || slice[end - 1] == b'\t') {
+        end -= 1;
+    }
+    &slice[..end]
+}
 use meuxe_ui::{key_of, Canvas, Key as UiKey};
 
 global_asm!(
@@ -463,7 +471,90 @@ fn directory_output<'a>(line: &[u8], owned: &'a mut [u8; 48]) -> Option<&'a [u8]
         report_ok(b"write=", &path[..n]);
         return Some(&owned[..count]);
     }
+    if let Some(rest) = strip(line, b"run ") {
+        let n = resolve(trim_ascii_end(rest), &mut path);
+        let size = load_elf(&path[..n]);
+        if size == 0 {
+            return Some(b"?");
+        }
+        let code = syscall(SYS_SPAWN, USER_IMAGE, size as u64);
+        let fault = code == (ERR_FAULT as u64);
+        let mut msg = [0u8; 32];
+        let prefix = b"run=";
+        let mut len = prefix.len();
+        msg[..len].copy_from_slice(prefix);
+        let room = msg.len() - len - 8;
+        let copy = n.min(room);
+        msg[len..len + copy].copy_from_slice(&path[..copy]);
+        len += copy;
+        msg[len..len + 6].copy_from_slice(b" exit=");
+        len += 6;
+        if fault {
+            msg[len..len + 5].copy_from_slice(b"fault");
+            len += 5;
+        } else {
+            msg[len] = b'0';
+            len += 1;
+        }
+        report_line(&msg[..len]);
+        let line = if fault { b"exit=fault" as &[u8] } else { b"exit=0" };
+        owned[..line.len()].copy_from_slice(line);
+        return Some(&owned[..line.len()]);
+    }
     None
+}
+
+const READ_BULK: u32 = 1 << 31;
+
+fn load_elf(path: &[u8]) -> usize {
+    let mut total = 0usize;
+    let mut offset = 0u32;
+    while total < 256 * 1024 {
+        let n = fs_read_bulk(path, offset);
+        if n == 0 {
+            break;
+        }
+        let dst = (USER_IMAGE + total as u64) as *mut u8;
+        let src = (USER_FS + 512) as *const u8;
+        for index in 0..n {
+            unsafe {
+                dst.add(index)
+                    .write_volatile(src.add(index).read_volatile());
+            }
+        }
+        total += n;
+        offset += n as u32;
+        if n < 3584 {
+            break;
+        }
+    }
+    total
+}
+
+fn fs_read_bulk(path: &[u8], offset: u32) -> usize {
+    let path_len = path.len().min(64);
+    unsafe {
+        (USER_FS as *mut u32).write_volatile(2);
+        ((USER_FS + 4) as *mut u32).write_volatile(path_len as u32);
+        ((USER_FS + 116) as *mut u32).write_volatile(READ_BULK | offset);
+        let slot = (USER_FS + 128) as *mut u8;
+        for index in 0..64 {
+            let byte = if index < path_len { path[index] } else { 0 };
+            slot.add(index).write_volatile(byte);
+        }
+        ((USER_FS + 24) as *mut u32).write_volatile(0);
+        ((USER_FS + 28) as *mut u32).write_volatile(0);
+    }
+    fence(Ordering::SeqCst);
+    send_fs();
+    for _ in 0..200_000 {
+        let status = unsafe { ((USER_FS + 24) as *const u32).read_volatile() };
+        if status != 0 {
+            return unsafe { ((USER_FS + 28) as *const u32).read_volatile() } as usize;
+        }
+        yield_once();
+    }
+    0
 }
 
 fn strip<'a>(line: &'a [u8], prefix: &[u8]) -> Option<&'a [u8]> {

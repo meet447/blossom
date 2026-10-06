@@ -5,7 +5,7 @@ use crate::object::{ObjectKind, Parked, TaskId};
 use meuxe_abi::{
     CapHandle, CapType, CompletionEntry, Rights, SpscRing, SubmissionEntry, ERR_AGAIN, ERR_FAULT,
     ERR_INVAL, RESULT_OK, SQ_FLAG_MAP_WRITE, SQ_OPCODE_MAP, SQ_OPCODE_NOP, SQ_OPCODE_RECV,
-    SQ_OPCODE_SEND,
+    SQ_OPCODE_SEND, SQ_OPCODE_WAIT,
 };
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -62,6 +62,7 @@ fn dispatch(
         SQ_OPCODE_SEND => rendezvous(caps, task, entry, sink, mem, true),
         SQ_OPCODE_RECV => rendezvous(caps, task, entry, sink, mem, false),
         SQ_OPCODE_MAP => map_frame(caps, task, entry, sink),
+        SQ_OPCODE_WAIT => wait_child(caps, task, entry, sink),
         _ => {
             finish(sink, task, entry.user_data, ERR_INVAL, 0);
             1
@@ -215,6 +216,27 @@ fn map_frame(
     ) {
         Ok((_, ObjectKind::Frame { phys })) => {
             finish(sink, task, entry.user_data, RESULT_OK, (phys >> 12) as u32);
+        }
+        Ok(_) => finish(sink, task, entry.user_data, CapError::WrongType.result(), 0),
+        Err(error) => finish(sink, task, entry.user_data, error.result(), 0),
+    }
+    1
+}
+
+fn wait_child(
+    caps: &mut CapSpace,
+    task: TaskId,
+    entry: SubmissionEntry,
+    sink: &mut dyn CompletionSink,
+) -> u32 {
+    match caps.lookup(
+        task,
+        CapHandle::new(entry.cap),
+        Rights::READ,
+        Some(CapType::CNode),
+    ) {
+        Ok((_, ObjectKind::CNode { task: child })) => {
+            finish(sink, task, entry.user_data, RESULT_OK, child.raw() as u32);
         }
         Ok(_) => finish(sink, task, entry.user_data, CapError::WrongType.result(), 0),
         Err(error) => finish(sink, task, entry.user_data, error.result(), 0),

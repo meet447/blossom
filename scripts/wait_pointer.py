@@ -70,6 +70,10 @@ def main() -> None:
     for command, marker in FS_STEPS:
         send_keys(stream, qcodes(command), command)
         wait_for(log_path, 40, lambda text, marker=marker: True if marker in text else None)
+    send_keys(stream, qcodes("run /bin/hello"), "run /bin/hello")
+    wait_for(log_path, 60, hello_ready)
+    send_keys(stream, qcodes("run /bin/fault"), "run /bin/fault")
+    wait_for(log_path, 60, fault_ready)
 
 
 def listening(text: str):
@@ -114,6 +118,18 @@ def directory_ready(text: str):
 
 def write_ready(text: str):
     if "meuxe: write ready" in text:
+        return True
+    return None
+
+
+def hello_ready(text: str):
+    if "meuxe: shell run=/bin/hello exit=0" in text:
+        return True
+    return None
+
+
+def fault_ready(text: str):
+    if "meuxe: shell run=/bin/fault exit=fault" in text:
         return True
     return None
 

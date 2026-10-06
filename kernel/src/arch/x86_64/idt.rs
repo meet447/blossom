@@ -6,6 +6,8 @@
 use super::cpu;
 use crate::log;
 use crate::sched;
+use crate::task::{DYN_FIRST, DYN_LAST};
+use super::percpu;
 use core::arch::{asm, global_asm};
 use core::mem::size_of;
 
@@ -136,6 +138,11 @@ extern "C" fn rust_interrupt(frame: *mut Frame) -> *mut Frame {
     } else {
         0
     };
+    let current = unsafe { (*percpu::this()).current_task as u8 };
+    if current >= DYN_FIRST && current <= DYN_LAST {
+        crate::proc::kill_fault(current, view.vector, cr2);
+        return sched::preempt(frame);
+    }
     log::fault(view.vector, view.error, view.rip, cr2);
     if cfg!(feature = "verify") {
         cpu::debug_exit(0x03);

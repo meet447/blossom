@@ -80,6 +80,7 @@ pub const SQ_OPCODE_NOP: u16 = 0;
 pub const SQ_OPCODE_SEND: u16 = 1;
 pub const SQ_OPCODE_RECV: u16 = 2;
 pub const SQ_OPCODE_MAP: u16 = 3;
+pub const SQ_OPCODE_WAIT: u16 = 4;
 
 /// One submission-queue entry. Userspace writes these; the kernel consumes them.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -126,6 +127,16 @@ pub const SYS_YIELD: u64 = 2;
 pub const SYS_REPORT: u64 = 3;
 /// Sleep until the virtio-blk completion interrupt arrives.
 pub const SYS_WAIT_IRQ: u64 = 4;
+/// Load an ELF image from the caller's address space and run it.
+pub const SYS_SPAWN: u64 = 5;
+/// Terminate the current spawned task.
+pub const SYS_EXIT: u64 = 6;
+
+pub const USER_CHILD: u64 = 0xE40000;
+/// Child view of the share frame the parent reads at `USER_CHILD`.
+pub const USER_CHILD_SHARE: u64 = USER_SHARE;
+pub const USER_IMAGE: u64 = 0x14000000;
+pub const USER_IMAGE_BYTES: u64 = 256 * 1024;
 
 pub const USER_INFO: u64 = 0xB00000;
 pub const USER_MMIO: u64 = 0xC00000;

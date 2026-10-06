@@ -23,17 +23,19 @@ CLIENT_ELF := target/x86_64-unknown-none/release/meuxe-client
 FILES_ELF := target/x86_64-unknown-none/release/meuxe-files
 CALC_ELF := target/x86_64-unknown-none/release/meuxe-calc
 INPUT_ELF := target/x86_64-unknown-none/release/meuxe-input
+HELLO_ELF := target/x86_64-unknown-none/release/meuxe-hello
+FAULT_ELF := target/x86_64-unknown-none/release/meuxe-fault
 
 test:
-	cargo test --workspace --exclude meuxe-kernel --exclude meuxe-rt --exclude meuxe-vfs --exclude meuxe-blk --exclude meuxe-compositor --exclude meuxe-client --exclude meuxe-files --exclude meuxe-calc --exclude meuxe-input
+	cargo test --workspace --exclude meuxe-kernel --exclude meuxe-rt --exclude meuxe-vfs --exclude meuxe-blk --exclude meuxe-compositor --exclude meuxe-client --exclude meuxe-files --exclude meuxe-calc --exclude meuxe-input --exclude meuxe-hello --exclude meuxe-fault
 
 user:
-	RUSTFLAGS="$(USER_RUSTFLAGS)" cargo build -p meuxe-vfs -p meuxe-blk -p meuxe-compositor -p meuxe-client -p meuxe-files -p meuxe-calc -p meuxe-input --release --target x86_64-unknown-none
+	RUSTFLAGS="$(USER_RUSTFLAGS)" cargo build -p meuxe-vfs -p meuxe-blk -p meuxe-compositor -p meuxe-client -p meuxe-files -p meuxe-calc -p meuxe-input -p meuxe-hello -p meuxe-fault --release --target x86_64-unknown-none
 
 initramfs: user
 	mkdir -p target
 	cargo run -p meuxe-fs --bin pack -- target/initramfs.bin vfs=$(VFS_ELF) blk=$(BLK_ELF) compositor=$(COMP_ELF) client=$(CLIENT_ELF) files=$(FILES_ELF) calc=$(CALC_ELF) input=$(INPUT_ELF)
-	cargo run -p meuxe-fs --bin mkfs -- $(DISK)
+	cargo run -p meuxe-fs --bin mkfs -- $(DISK) hello=$(HELLO_ELF) fault=$(FAULT_ELF)
 
 kernel: initramfs
 	cargo build -p meuxe-kernel --release --target x86_64-unknown-none
@@ -157,7 +159,13 @@ verify: kernel-verify $(LIMINE_DIR)/limine
 	grep -q "meuxe: shell mkdir=/tmp/d ok" target/boot.log; \
 	grep -q "meuxe: shell cat=/home/b onetwo" target/boot.log; \
 	grep -q "meuxe: shell rm=/tmp/d ok" target/boot.log; \
-	grep -q "meuxe: shell df free=" target/boot.log
+	grep -q "meuxe: shell df free=" target/boot.log; \
+	grep -q "meuxe: spawn task=24" target/boot.log; \
+	grep -q "meuxe: child task=24 says hello from disk" target/boot.log; \
+	grep -q "meuxe: exit task=24 code=0" target/boot.log; \
+	grep -q "meuxe: shell run=/bin/hello exit=0" target/boot.log; \
+	grep -q "meuxe: fault task=25 vector=14 cr2=0xdead0000 killed" target/boot.log; \
+	grep -q "meuxe: shell run=/bin/fault exit=fault" target/boot.log
 
 run: iso
 	cp $(OVMF_VARS_SRC) $(OVMF_VARS)

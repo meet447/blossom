@@ -158,6 +158,12 @@ impl CapSpace {
         self.objects.get_mut(object)
     }
 
+    pub fn revoke_task(&mut self, task: TaskId) {
+        for slot in &mut self.tasks[task.index()].slots {
+            *slot = Slot::empty();
+        }
+    }
+
     /// Vector of the first `Irq` capability installed in this task, in slot order.
     pub fn first_irq(&self, task: TaskId) -> Option<u32> {
         for slot in &self.tasks[task.index()].slots {

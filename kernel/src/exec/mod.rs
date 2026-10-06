@@ -122,6 +122,8 @@ fn overlaps_reserved(virt: u64, len: u64) -> bool {
         meuxe_abi::USER_FS_FILES,
         meuxe_abi::USER_PICK,
         meuxe_abi::USER_CALC_PICK,
+        meuxe_abi::USER_CHILD,
+        meuxe_abi::USER_IMAGE,
     ];
     if reserved.iter().any(|page| virt < page + 0x1000 && *page < end) {
         return true;
@@ -139,5 +141,9 @@ fn overlaps_reserved(virt: u64, len: u64) -> bool {
         return true;
     }
     let calc = meuxe_abi::USER_CALC;
-    virt < calc + 1024 * 1024 && calc < end
+    if virt < calc + 1024 * 1024 && calc < end {
+        return true;
+    }
+    let image = meuxe_abi::USER_IMAGE;
+    virt < image + meuxe_abi::USER_IMAGE_BYTES && image < end
 }

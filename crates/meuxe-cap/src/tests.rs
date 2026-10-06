@@ -5,7 +5,7 @@ use crate::object::{ObjectKind, TaskId};
 use meuxe_abi::{
     CapHandle, CapType, CompletionEntry, Rights, SpscRing, SubmissionEntry, ERR_AGAIN, ERR_BADF,
     ERR_FAULT, ERR_INVAL, ERR_PERM, RESULT_OK, SQ_FLAG_MAP_WRITE, SQ_OPCODE_MAP, SQ_OPCODE_NOP,
-    SQ_OPCODE_RECV, SQ_OPCODE_SEND,
+    SQ_OPCODE_RECV, SQ_OPCODE_SEND, SQ_OPCODE_WAIT,
 };
 use std::collections::BTreeMap;
 
@@ -321,6 +321,30 @@ fn full_completion_queue_leaves_the_submission() {
     let stats = process(&mut caps, task(0), &sq, &mut sink, &mut mem);
     assert_eq!(stats, ProcessStats { submitted: 0, completed: 0 });
     assert_eq!(sq.len(), 1);
+}
+
+#[test]
+#[test]
+fn cnode_wait_returns_child_id() {
+    let mut caps = CapSpace::new();
+    let child = task(24);
+    let cnode = caps
+        .create(ObjectKind::CNode { task: child })
+        .unwrap();
+    let handle = caps
+        .install(task(13), cnode, Rights::READ)
+        .unwrap();
+    let sq = SpscRing::<SubmissionEntry, 4>::new();
+    sq.push(entry(SQ_OPCODE_WAIT, handle.raw(), 0, 0, 9))
+        .unwrap();
+    let mut sink = Sink::new();
+    let mut mem = Mem::new(0);
+    process(&mut caps, task(13), &sq, &mut sink, &mut mem);
+    let done = sink.of(task(13));
+    assert_eq!(done.len(), 1);
+    assert_eq!(done[0].result, RESULT_OK);
+    assert_eq!(done[0].flags, 24);
+    assert_eq!(done[0].user_data, 9);
 }
 
 #[test]

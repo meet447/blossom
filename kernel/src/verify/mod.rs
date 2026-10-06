@@ -29,6 +29,8 @@ pub fn finish(boot: &BootInfo) -> Result<(), &'static str> {
     wait_record(boot)?;
     crate::kprintln!("meuxe: write ready");
     wait_free(boot)?;
+    wait_run_ok(boot)?;
+    wait_run_fault(boot)?;
     Ok(())
 }
 
@@ -113,6 +115,28 @@ pub fn wait_record(boot: &BootInfo) -> Result<(), &'static str> {
         cpu::hlt();
     }
     Err("terminal did not print the new record")
+}
+
+pub fn wait_run_ok(boot: &BootInfo) -> Result<(), &'static str> {
+    let start = sched::ticks();
+    while sched::ticks().wrapping_sub(start) <= 20000 {
+        if shows(boot, b"exit=0") {
+            return Ok(());
+        }
+        cpu::hlt();
+    }
+    Err("terminal did not print exit=0")
+}
+
+pub fn wait_run_fault(boot: &BootInfo) -> Result<(), &'static str> {
+    let start = sched::ticks();
+    while sched::ticks().wrapping_sub(start) <= 20000 {
+        if shows(boot, b"exit=fault") {
+            return Ok(());
+        }
+        cpu::hlt();
+    }
+    Err("terminal did not print exit=fault")
 }
 
 pub fn wait_free(boot: &BootInfo) -> Result<(), &'static str> {

@@ -59,6 +59,10 @@ extern "C" fn syscall_dispatch(number: u64, a0: u64, a1: u64) -> u64 {
             crate::dev::irq::wait(task, a0, a1);
             0
         }
+        meuxe_abi::SYS_SPAWN => crate::proc::spawn(task as u8, a0, a1),
+        meuxe_abi::SYS_EXIT => {
+            crate::proc::exit(task as u8, a0 as u32);
+        }
         meuxe_abi::SYS_YIELD => {
             if YIELD_STATUS
                 .compare_exchange(u64::MAX, a0, Ordering::AcqRel, Ordering::Acquire)
