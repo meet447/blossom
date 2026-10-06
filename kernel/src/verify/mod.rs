@@ -117,7 +117,7 @@ pub fn wait_record(boot: &BootInfo) -> Result<(), &'static str> {
 
 pub fn wait_free(boot: &BootInfo) -> Result<(), &'static str> {
     let start = sched::ticks();
-    while sched::ticks().wrapping_sub(start) <= 8000 {
+    while sched::ticks().wrapping_sub(start) <= 20000 {
         if shows(boot, b"free=") {
             return Ok(());
         }

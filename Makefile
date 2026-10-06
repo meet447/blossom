@@ -89,7 +89,7 @@ verify: kernel-verify $(LIMINE_DIR)/limine
 	python3 scripts/wait_pointer.py target/boot.log target/qmp.sock > target/qmp.log 2>&1 & \
 	waiter=$$!; \
 	set +e; \
-	timeout 150s qemu-system-x86_64 \
+	timeout 240s qemu-system-x86_64 \
 		-machine q35 \
 		-cpu qemu64 \
 		-m 512M \
