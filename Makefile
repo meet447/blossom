@@ -106,7 +106,7 @@ verify: kernel-verify $(LIMINE_DIR)/limine
 		-drive if=pflash,format=raw,file=$(OVMF_VARS) \
 		-drive file=$(DISK),if=none,format=raw,id=blkdisk \
 		-device virtio-blk-pci,drive=blkdisk,disable-legacy=on \
-		-netdev user,id=n0,net=10.0.2.0/24,host=10.0.2.2,guestfwd=tcp:10.0.2.100:80-cmd:python3 $(CURDIR)/scripts/http_stdio.py \
+		-netdev user,id=n0,net=10.0.2.0/24,host=10.0.2.2,guestfwd=tcp:10.0.2.100:80-cmd:$(CURDIR)/scripts/http_fwd.sh \
 		-device virtio-net-pci,netdev=n0,disable-legacy=on,mac=52:54:00:12:34:56 \
 		-device virtio-tablet-pci,disable-legacy=on,id=tablet \
 		-device virtio-keyboard-pci,disable-legacy=on \
@@ -190,7 +190,7 @@ run: iso
 		-drive if=pflash,format=raw,file=$(OVMF_VARS) \
 		-drive file=$(DISK),if=none,format=raw,id=blkdisk \
 		-device virtio-blk-pci,drive=blkdisk,disable-legacy=on \
-		-netdev user,id=n0,net=10.0.2.0/24,host=10.0.2.2,guestfwd=tcp:10.0.2.100:80-cmd:python3 $(CURDIR)/scripts/http_stdio.py \
+		-netdev user,id=n0,net=10.0.2.0/24,host=10.0.2.2,guestfwd=tcp:10.0.2.100:80-cmd:$(CURDIR)/scripts/http_fwd.sh \
 		-device virtio-net-pci,netdev=n0,disable-legacy=on,mac=52:54:00:12:34:56 \
 		-device virtio-tablet-pci,disable-legacy=on,id=tablet \
 		-device virtio-keyboard-pci,disable-legacy=on
