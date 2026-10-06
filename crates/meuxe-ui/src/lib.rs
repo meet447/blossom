@@ -152,6 +152,7 @@ pub fn key_of(code: u16) -> Option<Key> {
         16..=25 => Some(Key::Char(b"qwertyuiop"[(code - 16) as usize])),
         30..=38 => Some(Key::Char(b"asdfghjkl"[(code - 30) as usize])),
         44..=50 => Some(Key::Char(b"zxcvbnm"[(code - 44) as usize])),
+        53 => Some(Key::Char(b'/')),
         _ => None,
     }
 }
@@ -600,6 +601,7 @@ mod tests {
         assert_eq!(key_of(57), Some(Key::Char(b' ')));
         assert_eq!(key_of(28), Some(Key::Enter));
         assert_eq!(key_of(14), Some(Key::Backspace));
+        assert_eq!(key_of(53), Some(Key::Char(b'/')));
         assert_eq!(key_of(1), None);
     }
 
