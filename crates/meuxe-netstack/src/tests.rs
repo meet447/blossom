@@ -288,7 +288,7 @@ fn http_get_flow() {
         .http_get(Ipv4([10, 0, 2, 100]), 80, b"/", &mut out)
         .unwrap();
     let arp_reply = build_arp_reply(
-        [10, 0, 2, 100],
+        [10, 0, 2, 2],
         peer_mac().0,
         [10, 0, 2, 15],
         test_config().mac.0,

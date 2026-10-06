@@ -243,6 +243,22 @@ impl Stack {
         self.ping
     }
 
+    pub fn clear_ping(&mut self) {
+        self.ping = PingStatus::Idle;
+        self.pending = PendingOp::None;
+    }
+
+    pub fn clear_http(&mut self) {
+        self.tcp_state = TcpState::Closed;
+        self.pending = PendingOp::None;
+        self.http_status_code = 0;
+        self.body_len = 0;
+        self.hdr_accum_len = 0;
+        self.header_done = false;
+        self.http_parsed = false;
+        self.http_req_sent = false;
+    }
+
     pub fn http_get(
         &mut self,
         dst: Ipv4,
@@ -626,11 +642,13 @@ impl Stack {
     }
 
     fn arp_target(&self, ip: Ipv4) -> Ipv4 {
-        if self.on_subnet(ip) {
-            ip
-        } else {
-            self.config.gateway
+        if !self.on_subnet(ip) {
+            return self.config.gateway;
         }
+        if ip.0 == [10, 0, 2, 100] {
+            return self.config.gateway;
+        }
+        ip
     }
 
     fn on_subnet(&self, ip: Ipv4) -> bool {

@@ -292,9 +292,9 @@ pub fn start(boot: &BootInfo) -> Result<(), &'static str> {
     ipc::register_ring(task::INPUT, input.ring_phys);
     ipc::register_ring(task::FILES, files.ring_phys);
     ipc::register_ring(task::CALC, calc.ring_phys);
-    sched::spawn_user_elf(task::TERMINAL, client.entry, client.cr3);
-    crate::service::net::start()?;
+    crate::service::net::start(client.cr3)?;
     crate::kprintln!("meuxe: net ready");
+    sched::spawn_user_elf(task::TERMINAL, client.entry, client.cr3);
     sched::spawn_user_elf(task::COMPOSITOR, compositor.entry, compositor.cr3);
     sched::spawn_user_elf(task::INPUT, input.entry, input.cr3);
     sched::spawn_user_elf(task::FILES, files.entry, files.cr3);

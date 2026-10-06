@@ -10,7 +10,7 @@ use core::sync::atomic::{fence, Ordering};
 use meuxe_abi::{
     NetBoot, SubmissionEntry, SYS_REPORT, SYS_RING_PROCESS, SYS_WAIT_IRQ,
     NET_OFF_IP, NET_OFF_OP, NET_OFF_PATH, NET_OFF_PATH_LEN, NET_OFF_REPLY, NET_OFF_REPLY_LEN,
-    NET_OFF_STATUS, NET_OP_GET, NET_OP_INFO, NET_OP_PING, USER_INFO, SQ_OPCODE_RECV, SQ_OPCODE_SEND,
+    NET_OFF_STATUS, NET_OP_GET, NET_OP_INFO, NET_OP_PING, USER_INFO, SQ_OPCODE_RECV,
 };
 use meuxe_netstack::{Config, HttpStatus, Ipv4, Mac, PingStatus, Stack, TcpState, NET_HDR};
 use meuxe_rt::{ring, syscall, yield_once, RING};
@@ -31,6 +31,7 @@ const RPC_BOX: u64 = RING + 0x808;
 const RPC_TAG: u64 = 8;
 const MAC: [u8; 6] = [0x52, 0x54, 0x00, 0x12, 0x34, 0x56];
 static mut RPC_PHASE: u8 = 0;
+static mut LOOP_TICKS: u64 = 0;
 static mut OUT: [u8; 1600] = [0; 1600];
 static mut STACK_STORE: MaybeUninit<Stack> = MaybeUninit::uninit();
 static mut REPORT_MSG: [u8; 64] = [0; 64];
@@ -126,13 +127,12 @@ fn serve(boot: &NetBoot, dev: &mut Dev, stack: &mut Stack) -> ! {
         }
         syscall(SYS_RING_PROCESS, 0, 0);
 
-        drain_rx(dev, stack, out);
+        drain_rx(dev, stack, out, boot);
         drain_tx(dev);
 
         if pending_rpc {
             if drive_rpc(boot, dev, stack, out, rpc_op, &mut tcp_logged) {
                 pending_rpc = false;
-                reply_rpc();
             }
         }
 
@@ -143,9 +143,9 @@ fn serve(boot: &NetBoot, dev: &mut Dev, stack: &mut Stack) -> ! {
         if pending_rpc || work_pending(&*dev, stack) {
             yield_once();
         } else if posted {
-            yield_once();
-        } else {
             syscall(SYS_WAIT_IRQ, NET_VECTOR, TIMER_VECTOR);
+        } else {
+            yield_once();
         }
     }
 }
@@ -206,7 +206,7 @@ fn drive_rpc(
                         unsafe {
                             RPC_PHASE = 0;
                         }
-                        finish_ping(boot);
+                        finish_ping(boot, stack);
                         return true;
                     }
                     return false;
@@ -232,8 +232,16 @@ fn drive_rpc(
                 for index in 0..path_len {
                     path[index] = read8(boot.share_virt, NET_OFF_PATH + index as u64);
                 }
-                if let Ok(n) = stack.http_get(Ipv4(ip), 80, &path[..path_len], out) {
-                    transmit(dev, &out[..n]);
+                match stack.http_get(Ipv4(ip), 80, &path[..path_len], out) {
+                    Ok(n) => {
+                        if n > 0 {
+                            transmit(dev, &out[..n]);
+                        }
+                    }
+                    Err(_) => {
+                        write32(boot.share_virt, NET_OFF_STATUS, 2);
+                        return true;
+                    }
                 }
                 unsafe {
                     RPC_PHASE = 1;
@@ -243,17 +251,21 @@ fn drive_rpc(
             _ => {
                 poll_stack(boot, dev, stack, out);
                 if let HttpStatus::Active { state, .. } = stack.http_status() {
-                    if state == TcpState::Established && !*tcp_logged {
-                        report_tcp(&read_ip(boot.share_virt));
-                        *tcp_logged = true;
-                    }
                     if matches!(state, TcpState::TimeWait | TcpState::Closed) {
                         let ip = read_ip(boot.share_virt);
+                        if !*tcp_logged {
+                            report_tcp(&ip);
+                            *tcp_logged = true;
+                        }
                         unsafe {
                             RPC_PHASE = 0;
                         }
-                        finish_get(boot, stack, &ip);
+                        finish_get_done(boot, stack, &ip);
                         return true;
+                    }
+                    if state == TcpState::Established && !*tcp_logged {
+                        report_tcp(&read_ip(boot.share_virt));
+                        *tcp_logged = true;
                     }
                     return false;
                 }
@@ -262,7 +274,7 @@ fn drive_rpc(
                     unsafe {
                         RPC_PHASE = 0;
                     }
-                    finish_get(boot, stack, &ip);
+                    finish_get_done(boot, stack, &ip);
                     return true;
                 }
                 false
@@ -279,7 +291,12 @@ fn drive_rpc(
 }
 
 fn stack_tick(boot: &NetBoot, stack: &mut Stack, out: &mut [u8]) -> Option<usize> {
-    let ticks = unsafe { ((boot.tick_virt) as *const u64).read_volatile() };
+    let kernel = unsafe { ((boot.tick_virt) as *const u64).read_volatile() };
+    let local = unsafe {
+        LOOP_TICKS = LOOP_TICKS.wrapping_add(1);
+        LOOP_TICKS
+    };
+    let ticks = kernel.max(local);
     stack.tick(ticks, out)
 }
 
@@ -412,7 +429,13 @@ fn phys_queue(dev: &Dev, rx: bool) -> u64 {
     dev.dma_phys[page]
 }
 
-fn drain_rx(dev: &mut Dev, stack: &mut Stack, out: &mut [u8]) {
+fn ack_isr(boot: &NetBoot) {
+    if boot.isr != 0 {
+        let _ = read8(boot.isr, 0);
+    }
+}
+
+fn drain_rx(dev: &mut Dev, stack: &mut Stack, out: &mut [u8], boot: &NetBoot) {
     let idx = read16(dev.rx_queue + USED, 2);
     while dev.rx_last != idx {
         let slot = (dev.rx_last % dev.queue_size) as u64;
@@ -433,6 +456,7 @@ fn drain_rx(dev: &mut Dev, stack: &mut Stack, out: &mut [u8]) {
         }
         dev.rx_last = dev.rx_last.wrapping_add(1);
     }
+    ack_isr(boot);
 }
 
 fn requeue_rx(dev: &Dev, id: u16) {
@@ -493,7 +517,7 @@ fn transmit(dev: &Dev, frame: &[u8]) {
 }
 
 fn poll_stack(boot: &NetBoot, dev: &mut Dev, stack: &mut Stack, out: &mut [u8]) {
-    drain_rx(dev, stack, out);
+    drain_rx(dev, stack, out, boot);
     drain_tx(dev);
     if let Some(n) = stack_tick(boot, stack, out) {
         transmit(dev, &out[..n]);
@@ -549,8 +573,9 @@ fn finish_info(boot: &NetBoot) -> bool {
     true
 }
 
-fn finish_ping(boot: &NetBoot) {
+fn finish_ping(boot: &NetBoot, stack: &mut Stack) {
     write_reply(boot, b"rx=4/4");
+    stack.clear_ping();
 }
 
 fn finish_get(boot: &NetBoot, stack: &Stack, ip: &[u8; 4]) {
@@ -572,6 +597,11 @@ fn finish_get(boot: &NetBoot, stack: &Stack, ip: &[u8; 4]) {
     pos += take;
     write_reply(boot, &reply[..pos]);
     let _ = ip;
+}
+
+fn finish_get_done(boot: &NetBoot, stack: &mut Stack, ip: &[u8; 4]) {
+    finish_get(boot, stack, ip);
+    stack.clear_http();
 }
 
 fn write_dec_field(dst: &mut [u8], label: &[u8], value: u32) -> usize {
@@ -598,25 +628,6 @@ fn read_ip(base: u64) -> [u8; 4] {
         read8(base, NET_OFF_IP + 2),
         read8(base, NET_OFF_IP + 3),
     ]
-}
-
-fn reply_rpc() {
-    for _ in 0..8 {
-        let send = SubmissionEntry {
-            opcode: SQ_OPCODE_SEND,
-            flags: 0,
-            cap: ENDPOINT,
-            a: 0,
-            b: 0,
-            user_data: RPC_TAG + 1,
-        };
-        if ring().sq.push(send).is_err() {
-            yield_once();
-            continue;
-        }
-        syscall(SYS_RING_PROCESS, 0, 0);
-        return;
-    }
 }
 
 fn notify(dev: &Dev, queue: u16) {

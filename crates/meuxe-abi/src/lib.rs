@@ -275,9 +275,10 @@ pub struct NetBoot {
     pub share_virt: u64,
     pub tick_phys: u64,
     pub tick_virt: u64,
+    pub isr: u64,
 }
 
-const _: () = assert!(core::mem::size_of::<NetBoot>() == 200);
+const _: () = assert!(core::mem::size_of::<NetBoot>() == 208);
 
 /// Framebuffer and the two client buffers, in the compositor's address space.
 #[repr(C)]

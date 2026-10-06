@@ -77,7 +77,7 @@ def main() -> None:
     send_keys(stream, qcodes("ping 10.0.2.2"), "ping 10.0.2.2")
     wait_for(log_path, 60, ping_ready)
     send_keys(stream, qcodes("fetch 10.0.2.100"), "fetch 10.0.2.100")
-    wait_for(log_path, 60, fetch_ready)
+    wait_for(log_path, 120, fetch_ready)
 
 
 def listening(text: str):

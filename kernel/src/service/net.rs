@@ -14,6 +14,7 @@ use meuxe_fs::Archive;
 
 const INITRAMFS: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/initramfs.bin"));
 const DMA_PAGES: usize = 16;
+const TICK_DMA_PAGE: u64 = 14;
 
 static TICK_PAGE: AtomicU64 = AtomicU64::new(0);
 
@@ -21,7 +22,7 @@ pub fn tick_page() -> u64 {
     TICK_PAGE.load(Ordering::Acquire)
 }
 
-pub fn start() -> Result<(), &'static str> {
+pub fn start(client_cr3: u64) -> Result<(), &'static str> {
     let archive = Archive::parse(INITRAMFS).map_err(meuxe_fs::FsError::as_str)?;
     let net_image = archive.lookup(b"net").ok_or("initramfs is missing net")?;
     let device = pci::find_virtio_net()?;
@@ -34,7 +35,6 @@ pub fn start() -> Result<(), &'static str> {
     );
 
     let net = exec::load(net_image)?;
-    let client_cr3 = sched::user_cr3(task::TERMINAL);
     if net.cr3 == mm::kernel_cr3() || net.cr3 == client_cr3 {
         return Err("net address space is not distinct");
     }
@@ -59,7 +59,7 @@ pub fn start() -> Result<(), &'static str> {
 
     mm::map_user_in(net.cr3, USER_NET, share, UserPerm::Rw)?;
     mm::map_user_in(client_cr3, USER_NET, share, UserPerm::Rw)?;
-    mm::map_user_in(net.cr3, USER_NET_DMA + 0xE000, tick, UserPerm::Ro)?;
+    mm::map_user_in(net.cr3, USER_NET_DMA + TICK_DMA_PAGE * 4096, tick, UserPerm::Ro)?;
 
     let common = map_window(net.cr3, USER_MMIO, device.common, device.common_len.max(0x40))?;
     let notify = map_window(
@@ -78,19 +78,30 @@ pub fn start() -> Result<(), &'static str> {
             device.device_len.max(8),
         )?
     };
+    let isr_va = if device.isr == 0 {
+        0
+    } else {
+        map_window(
+            net.cr3,
+            USER_MMIO + 0x30000,
+            device.isr,
+            device.isr_len.max(1),
+        )?
+    };
 
     let boot = NetBoot {
         common,
         notify,
         device: device_va,
         notify_mul: device.notify_mul,
-        queue_size: 7,
+        queue_size: 6,
         dma_phys,
         dma_virt: USER_NET_DMA,
         share_phys: share,
         share_virt: USER_NET,
         tick_phys: tick,
-        tick_virt: USER_NET_DMA + 0xE000,
+        tick_virt: USER_NET_DMA + TICK_DMA_PAGE * 4096,
+        isr: isr_va,
     };
     unsafe {
         ((mm::hhdm() + info) as *mut NetBoot).write_volatile(boot);

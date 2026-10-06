@@ -487,8 +487,8 @@ fn directory_output<'a>(line: &[u8], owned: &'a mut [u8; 48]) -> Option<&'a [u8]
         msg[..5].copy_from_slice(b"ping=");
         let mut pos = 5usize;
         pos += write_ip(&mut msg[pos..], &octets);
-        msg[pos..pos + 4].copy_from_slice(b" rx=");
-        pos += 4;
+        msg[pos] = b' ';
+        pos += 1;
         let reply = net_reply();
         let take = reply.len().min(msg.len() - pos);
         msg[pos..pos + take].copy_from_slice(&reply[..take]);
