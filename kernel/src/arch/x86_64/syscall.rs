@@ -46,7 +46,9 @@ extern "C" fn syscall_dispatch(number: u64, a0: u64, a1: u64) -> u64 {
         meuxe_abi::SYS_TASK_ID => task,
         meuxe_abi::SYS_RING_PROCESS => {
             let completed = ipc::process_ring(task);
-            crate::kprintln!("meuxe: syscall task={task} submit={completed}");
+            if completed != 0 {
+                crate::kprintln!("meuxe: syscall task={task} submit={completed}");
+            }
             completed as u64
         }
         meuxe_abi::SYS_REPORT => {

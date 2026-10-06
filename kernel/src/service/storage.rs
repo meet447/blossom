@@ -20,6 +20,7 @@ const INITRAMFS: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/initramfs.bin
 static BLK_OK: AtomicBool = AtomicBool::new(false);
 static VFS_OK: AtomicBool = AtomicBool::new(false);
 static DIRECTORY_STORED: AtomicBool = AtomicBool::new(false);
+static FS_WRITE_LOGGED: AtomicBool = AtomicBool::new(false);
 static REPORTS: Mutex<()> = Mutex::new(());
 static FS_FRAME: AtomicU64 = AtomicU64::new(0);
 
@@ -138,7 +139,6 @@ pub fn note_report(task: u64, ptr: u64, len: u64) {
         crate::kprintln!("meuxe: report task={task} unmapped");
         return;
     };
-    crate::kprintln!("meuxe: report task={task} len={len}");
     let share_lo = USER_SHARE + 16;
     let share_hi = share_lo + 512;
     let in_sector = ptr >= share_lo && ptr.saturating_add(len) <= share_hi;
@@ -151,7 +151,9 @@ pub fn note_report(task: u64, ptr: u64, len: u64) {
     }
     if task == task::BLK as u64 && in_write && &bytes[..len as usize] == b"MXDF" {
         if DIRECTORY_STORED.swap(true, Ordering::AcqRel) {
-            crate::kprintln!("meuxe: fs write=ok");
+            if !FS_WRITE_LOGGED.swap(true, Ordering::AcqRel) {
+                crate::kprintln!("meuxe: fs write=ok");
+            }
         } else {
             crate::kprintln!("meuxe: blk write=ok");
         }
