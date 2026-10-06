@@ -68,6 +68,13 @@ pub fn start() -> Result<(), &'static str> {
     let queue = mm::alloc_frame_zeroed()?;
     let info = mm::alloc_frame_zeroed()?;
     let fs = mm::alloc_frame_zeroed()?;
+    let mut data_phys = [0u64; 8];
+    for (index, slot) in data_phys.iter_mut().enumerate() {
+        let frame = mm::alloc_frame_zeroed()?;
+        let virt = USER_SHARE + ((index as u64) + 1) * 4096;
+        mm::map_user_in(blk.cr3, virt, frame, UserPerm::UncachedRw)?;
+        *slot = frame;
+    }
     mm::map_user_in(vfs.cr3, USER_SHARE, share, UserPerm::UncachedRw)?;
     mm::map_user_in(blk.cr3, USER_SHARE, share, UserPerm::UncachedRw)?;
     mm::map_user_in(blk.cr3, USER_QUEUE, queue, UserPerm::UncachedRw)?;
@@ -101,6 +108,7 @@ pub fn start() -> Result<(), &'static str> {
         share_phys: share,
         queue_virt: USER_QUEUE,
         share_virt: USER_SHARE,
+        data_phys,
     };
     unsafe {
         ((mm::hhdm() + info) as *mut BlkBoot).write_volatile(boot);
@@ -150,6 +158,17 @@ pub fn note_report(task: u64, ptr: u64, len: u64) {
     if task == task::VFS as u64 && in_sector && &bytes[..len as usize] == b"meuxe-phase3" {
         crate::kprintln!("meuxe: vfs note=meuxe-phase3");
         VFS_OK.store(true, Ordering::Release);
+    }
+    if task == task::BLK as u64 && &bytes[..len as usize] == b"RNG!" {
+        crate::kprintln!("meuxe: blk range lba=8 sectors=64 ok");
+    }
+    if task == task::BLK as u64
+        && (1..len as usize).all(|_| true)
+        && bytes[..len as usize].iter().all(|byte| byte.is_ascii_digit())
+    {
+        if let Ok(text) = core::str::from_utf8(&bytes[..len as usize]) {
+            crate::kprintln!("meuxe: blk capacity={text}");
+        }
     }
 }
 

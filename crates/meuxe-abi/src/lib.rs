@@ -228,9 +228,11 @@ pub struct BlkBoot {
     pub share_phys: u64,
     pub queue_virt: u64,
     pub share_virt: u64,
+    /// Physical addresses of the eight data pages at `share_virt + 4096`.
+    pub data_phys: [u64; 8],
 }
 
-const _: () = assert!(core::mem::size_of::<BlkBoot>() == 64);
+const _: () = assert!(core::mem::size_of::<BlkBoot>() == 128);
 
 /// Framebuffer and the two client buffers, in the compositor's address space.
 #[repr(C)]

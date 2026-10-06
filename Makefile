@@ -128,6 +128,8 @@ verify: kernel-verify $(LIMINE_DIR)/limine
 	grep -q "meuxe: cr3 distinct" target/boot.log; \
 	grep -q "meuxe: virtio-blk" target/boot.log; \
 	grep -q "meuxe: blk sector=MXLG" target/boot.log; \
+	grep -q "meuxe: blk capacity=131072" target/boot.log; \
+	grep -q "meuxe: blk range lba=8 sectors=64 ok" target/boot.log; \
 	grep -q "meuxe: vfs note=meuxe-phase3" target/boot.log; \
 	grep -q "meuxe: storage ready" target/boot.log; \
 	grep -q "meuxe: desktop fb " target/boot.log; \

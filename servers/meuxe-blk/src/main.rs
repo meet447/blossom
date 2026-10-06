@@ -33,6 +33,11 @@ const DESC_WRITE: u16 = 2;
 const T_IN: u32 = 0;
 const T_OUT: u32 = 1;
 const DATA_LEN: u32 = 1024;
+const QUEUE_SIZE: u16 = 16;
+const AVAIL: u64 = 0x100;
+const USED: u64 = 0x200;
+const RANGE_HDR: u64 = 3584;
+const RANGE_STATUS: u64 = 3600;
 
 #[no_mangle]
 extern "C" fn main() -> ! {
@@ -59,6 +64,13 @@ extern "C" fn main() -> ! {
             {
                 syscall(SYS_REPORT, USER_SHARE + 2048 + 16, 4);
             }
+            report_capacity(boot);
+            if read_range(boot, notify, 4) {
+                for (index, byte) in b"RNG!".iter().enumerate() {
+                    write8(USER_SHARE, 4016 + index as u64, *byte);
+                }
+                syscall(SYS_REPORT, USER_SHARE + 4016, 4);
+            }
             serve(boot, notify);
         }
     }
@@ -69,7 +81,7 @@ extern "C" fn main() -> ! {
 
 fn serve(boot: &BlkBoot, notify: u64) -> ! {
     let mut posted = false;
-    let mut next_idx = 4u16;
+    let mut next_idx = 5u16;
     loop {
         while ring().cq.pop().is_some() {}
         if !posted {
@@ -163,13 +175,13 @@ fn prepare(boot: &BlkBoot) -> Option<u64> {
     }
     write16(common, 0x16, 0);
     let max = read16(common, 0x18);
-    if max < 4 {
+    if max < QUEUE_SIZE {
         return None;
     }
-    write16(common, 0x18, 4);
+    write16(common, 0x18, QUEUE_SIZE);
     write64(common, 0x20, boot.queue_phys);
-    write64(common, 0x28, boot.queue_phys + 0x80);
-    write64(common, 0x30, boot.queue_phys + 0x800);
+    write64(common, 0x28, boot.queue_phys + AVAIL);
+    write64(common, 0x30, boot.queue_phys + USED);
     write16(common, 0x1a, 0);
     if read16(common, 0x1a) == 0xFFFF {
         return None;
@@ -217,10 +229,10 @@ fn submit(
         DESC_WRITE,
         0,
     );
-    let slot = (idx - 1) & 3;
-    write16(boot.queue_virt + 0x80, 4 + slot as u64 * 2, 0);
+    let slot = (idx - 1) & (QUEUE_SIZE - 1);
+    write16(boot.queue_virt + AVAIL, 4 + slot as u64 * 2, 0);
     fence(Ordering::SeqCst);
-    write16(boot.queue_virt + 0x80, 2, idx);
+    write16(boot.queue_virt + AVAIL, 2, idx);
     fence(Ordering::SeqCst);
     unsafe {
         (notify as *mut u16).write_volatile(0);
@@ -233,13 +245,81 @@ fn finish(boot: &BlkBoot, expect: u16, status_off: u64) -> bool {
     for _ in 0..4 {
         syscall(SYS_WAIT_IRQ, 0, 0);
         fence(Ordering::SeqCst);
-        let idx = read16(boot.queue_virt + 0x800, 2);
+        let idx = read16(boot.queue_virt + USED, 2);
         if idx >= expect {
             let status = read8(boot.share_virt, status_off);
             return status == 0;
         }
     }
     false
+}
+
+fn report_capacity(boot: &BlkBoot) {
+    if boot.device == 0 {
+        return;
+    }
+    let mut sectors = read64(boot.device, 0);
+    let mut tmp = [0u8; 20];
+    let mut index = tmp.len();
+    if sectors == 0 {
+        index -= 1;
+        tmp[index] = b'0';
+    }
+    while sectors > 0 && index > 0 {
+        index -= 1;
+        tmp[index] = b'0' + (sectors % 10) as u8;
+        sectors /= 10;
+    }
+    let digits = &tmp[index..];
+    for (slot, byte) in digits.iter().enumerate() {
+        write8(USER_SHARE, 4000 + slot as u64, *byte);
+    }
+    syscall(SYS_REPORT, USER_SHARE + 4000, digits.len() as u64);
+}
+
+fn read_range(boot: &BlkBoot, notify: u64, idx: u16) -> bool {
+    let header = boot.share_virt + RANGE_HDR;
+    write32(header, 0, T_IN);
+    write32(header, 4, 0);
+    write64(header, 8, 8);
+    write8(boot.share_virt, RANGE_STATUS, 0xFF);
+    write_desc(
+        boot.queue_virt,
+        0,
+        boot.share_phys + RANGE_HDR,
+        16,
+        DESC_NEXT,
+        1,
+    );
+    for page in 0..8u64 {
+        let next = if page == 7 { 9 } else { (page as u16) + 2 };
+        write_desc(
+            boot.queue_virt,
+            1 + page,
+            boot.data_phys[page as usize],
+            4096,
+            DESC_NEXT | DESC_WRITE,
+            next,
+        );
+    }
+    write_desc(
+        boot.queue_virt,
+        9,
+        boot.share_phys + RANGE_STATUS,
+        1,
+        DESC_WRITE,
+        0,
+    );
+    let slot = (idx - 1) & (QUEUE_SIZE - 1);
+    write16(boot.queue_virt + AVAIL, 4 + slot as u64 * 2, 0);
+    fence(Ordering::SeqCst);
+    write16(boot.queue_virt + AVAIL, 2, idx);
+    fence(Ordering::SeqCst);
+    unsafe {
+        (notify as *mut u16).write_volatile(0);
+    }
+    fence(Ordering::SeqCst);
+    finish(boot, idx, RANGE_STATUS)
 }
 
 fn copy_for_write(boot: &BlkBoot) -> bool {
@@ -287,4 +367,8 @@ fn write32(base: u64, off: u64, value: u32) {
 
 fn write64(base: u64, off: u64, value: u64) {
     unsafe { ((base + off) as *mut u64).write_volatile(value) }
+}
+
+fn read64(base: u64, off: u64) -> u64 {
+    unsafe { ((base + off) as *const u64).read_volatile() }
 }
