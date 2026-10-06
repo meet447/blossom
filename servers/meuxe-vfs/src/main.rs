@@ -1,21 +1,19 @@
-//! Publish `note` from the shared sector, then answer `ls`, `cat`, and `write`.
+//! Mount the MXDF volume and answer path requests from the shell and Files.
 //!
-//! The note report still points into the share page. Later directory
-//! requests are served from a copy. `write` appends to that copy and asks
-//! the block driver to store it back at sector 0.
+//! Block reads and writes are one 4096-byte page at `USER_SHARE + 4096`.
+//! The request header sits at `USER_SHARE + 3200`.
 
 #![no_std]
 #![no_main]
 
 use core::arch::global_asm;
-use core::cell::UnsafeCell;
+use core::mem::MaybeUninit;
 use core::sync::atomic::{fence, Ordering};
 use meuxe_abi::{
     SubmissionEntry, ERR_AGAIN, RESULT_OK, SYS_REPORT, SYS_RING_PROCESS, USER_FS, USER_FS_FILES,
-    USER_SHARE,
-    SQ_OPCODE_RECV, SQ_OPCODE_SEND,
+    USER_SHARE, SQ_OPCODE_RECV, SQ_OPCODE_SEND,
 };
-use meuxe_fs::{append_record, Log};
+use meuxe_fs::mxdf::{BlockDev, Volume, BLOCK, CREATE, MxError, TRUNC};
 use meuxe_rt::{ring, syscall, yield_once, RING};
 
 global_asm!(
@@ -36,20 +34,51 @@ const FILES_BOX: u64 = RING + 0x818;
 const OP_LIST: u32 = 1;
 const OP_READ: u32 = 2;
 const OP_WRITE: u32 = 3;
+const OP_STAT: u32 = 4;
+const OP_MKDIR: u32 = 5;
+const OP_UNLINK: u32 = 6;
+const OP_RENAME: u32 = 7;
+const OP_DF: u32 = 8;
 const BLK_REQUEST: u64 = 1;
 const STORE_TAG: u64 = 5;
 const REPLY_TAG: u64 = 4;
 const REPLY_BOX: u64 = RING + 0x810;
+const REQ: u64 = 3200;
+const DATA: u64 = USER_SHARE + 4096;
 
-struct LogBuf {
-    bytes: UnsafeCell<[u8; 1024]>,
+struct Disk;
+
+impl BlockDev for Disk {
+    fn read_block(&mut self, block: u32, buf: &mut [u8; BLOCK]) -> Result<(), MxError> {
+        if !xfer(1, block) {
+            return Err(MxError::Io);
+        }
+        unsafe {
+            let src = DATA as *const u8;
+            for index in 0..BLOCK {
+                buf[index] = src.add(index).read_volatile();
+            }
+        }
+        Ok(())
+    }
+
+    fn write_block(&mut self, block: u32, buf: &mut [u8; BLOCK]) -> Result<(), MxError> {
+        unsafe {
+            let dst = DATA as *mut u8;
+            for index in 0..BLOCK {
+                dst.add(index).write_volatile(buf[index]);
+            }
+        }
+        fence(Ordering::SeqCst);
+        if xfer(2, block) {
+            Ok(())
+        } else {
+            Err(MxError::Io)
+        }
+    }
 }
 
-unsafe impl Sync for LogBuf {}
-
-static LOG_BYTES: LogBuf = LogBuf {
-    bytes: UnsafeCell::new([0; 1024]),
-};
+static mut VOLUME: MaybeUninit<Volume<Disk>> = MaybeUninit::uninit();
 
 #[no_mangle]
 extern "C" fn main() -> ! {
@@ -65,39 +94,69 @@ extern "C" fn main() -> ! {
     loop {
         let mailbox = unsafe { (BLK_BOX as *const u64).read_volatile() };
         if mailbox != 0 {
+            unsafe {
+                (BLK_BOX as *mut u64).write_volatile(0);
+            }
             break;
         }
         syscall(SYS_RING_PROCESS, 0, 0);
         let mailbox = unsafe { (BLK_BOX as *const u64).read_volatile() };
         if mailbox != 0 {
+            unsafe {
+                (BLK_BOX as *mut u64).write_volatile(0);
+            }
             break;
         }
         yield_once();
     }
-    report_note();
-    copy_log();
+    if mount() {
+        report_mount();
+        report_note();
+    }
     serve();
 }
 
-fn report_note() {
-    let sector = unsafe { core::slice::from_raw_parts((USER_SHARE + 16) as *const u8, 1024) };
-    let Ok(log) = Log::parse(sector) else {
-        return;
-    };
-    let Some(note) = log.lookup(b"note") else {
-        return;
-    };
-    syscall(SYS_REPORT, note.as_ptr() as u64, note.len() as u64);
+fn vol() -> &'static mut Volume<Disk> {
+    unsafe { VOLUME.assume_init_mut() }
 }
 
-fn copy_log() {
-    unsafe {
-        let dst = (*LOG_BYTES.bytes.get()).as_mut_ptr();
-        let src = (USER_SHARE + 16) as *const u8;
-        for index in 0..1024 {
-            *dst.add(index) = src.add(index).read_volatile();
+fn mount() -> bool {
+    match Volume::mount(Disk) {
+        Ok(volume) => {
+            unsafe {
+                VOLUME.write(volume);
+            }
+            true
+        }
+        Err(_) => false,
+    }
+}
+
+fn report_mount() {
+    for (index, byte) in b"MOUNT".iter().enumerate() {
+        unsafe {
+            ((USER_SHARE + 3000 + index as u64) as *mut u8).write_volatile(*byte);
         }
     }
+    syscall(SYS_REPORT, USER_SHARE + 3000, 5);
+}
+
+fn report_note() {
+    let mut body = [0u8; 32];
+    let len = match vol().read_at(b"/home/note", 0, &mut body) {
+        Ok(len) => len,
+        Err(_) => return,
+    };
+    if len == 0 {
+        return;
+    }
+    unsafe {
+        let dst = (USER_SHARE + 16) as *mut u8;
+        for index in 0..len {
+            dst.add(index).write_volatile(body[index]);
+        }
+    }
+    syscall(SYS_REPORT, USER_SHARE + 16, len as u64);
 }
 
 fn serve() -> ! {
@@ -162,42 +221,31 @@ fn take_clients() -> (bool, bool) {
 
 fn answer(page: u64) {
     let op = read_u32(page, 0);
-    let name_len = (read_u32(page, 4) as usize).min(16);
-    let mut name = [0u8; 16];
-    for index in 0..name_len {
-        name[index] = read_u8(page, 8 + index);
+    let path_len = (read_u32(page, 4) as usize).min(64);
+    let mut path = [0u8; 64];
+    for index in 0..path_len {
+        path[index] = read_u8(page, 128 + index);
     }
+    let aux_len = (read_u32(page, 192) as usize).min(64);
+    let mut aux = [0u8; 64];
+    for index in 0..aux_len {
+        aux[index] = read_u8(page, 196 + index);
+    }
+    let data_len = (read_u32(page, 80) as usize).min(32);
+    let mut data = [0u8; 32];
+    for index in 0..data_len {
+        data[index] = read_u8(page, 84 + index);
+    }
+    let flags = read_u32(page, 116);
     let mut out = [0u8; 48];
-    let mut out_len = 0usize;
-    let bytes = unsafe { &mut *LOG_BYTES.bytes.get() };
-    if op == OP_WRITE {
-        let data_len = (read_u32(page, 80) as usize).min(32);
-        let mut data = [0u8; 32];
-        for index in 0..data_len {
-            data[index] = read_u8(page, 84 + index);
-        }
-        if name_len > 0
-            && data_len > 0
-            && append_record(bytes, &name[..name_len], &data[..data_len]).is_ok()
-            && store_log(bytes)
-        {
-            if let Ok(log) = Log::parse(bytes) {
-                if let Some(body) = log.lookup(&name[..name_len]) {
-                    out_len = body.len().min(out.len());
-                    out[..out_len].copy_from_slice(&body[..out_len]);
-                }
-            }
-        }
-    } else if let Ok(log) = Log::parse(bytes) {
-        if op == OP_LIST {
-            out_len = log.write_names(&mut out);
-        } else if op == OP_READ {
-            if let Some(data) = log.lookup(&name[..name_len]) {
-                out_len = data.len().min(out.len());
-                out[..out_len].copy_from_slice(&data[..out_len]);
-            }
-        }
-    }
+    let out_len = dispatch(
+        op,
+        &path[..path_len],
+        &aux[..aux_len],
+        &data[..data_len],
+        flags,
+        &mut out,
+    );
     for index in 0..out_len {
         write_u8(page, 32 + index, out[index]);
     }
@@ -207,12 +255,90 @@ fn answer(page: u64) {
     fence(Ordering::SeqCst);
 }
 
-fn store_log(bytes: &[u8]) -> bool {
-    unsafe {
-        let dst = (USER_SHARE + 2048 + 16) as *mut u8;
-        for index in 0..1024 {
-            dst.add(index).write_volatile(bytes[index]);
+fn dispatch(
+    op: u32,
+    path: &[u8],
+    aux: &[u8],
+    data: &[u8],
+    flags: u32,
+    out: &mut [u8],
+) -> usize {
+    let volume = vol();
+    let result = match op {
+        OP_LIST => volume.list(path, out).map(|len| len.min(out.len())),
+        OP_READ => volume.read_at(path, 0, out),
+        OP_WRITE => {
+            let bits = if flags == 0 { CREATE | TRUNC } else { flags };
+            match volume.write_at(path, 0, data, bits) {
+                Ok(_) if data.is_empty() => Ok(copy_ok(out)),
+                Ok(_) => {
+                    let n = data.len().min(out.len());
+                    out[..n].copy_from_slice(&data[..n]);
+                    Ok(n)
+                }
+                Err(error) => Err(error),
+            }
         }
+        OP_STAT => match volume.stat(path) {
+            Ok(stat) => {
+                let word = if stat.kind == 2 { b"dir" as &[u8] } else { b"file" };
+                let n = word.len().min(out.len());
+                out[..n].copy_from_slice(&word[..n]);
+                Ok(n)
+            }
+            Err(error) => Err(error),
+        },
+        OP_MKDIR => volume.mkdir(path).map(|_| copy_ok(out)),
+        OP_UNLINK => volume.unlink(path).map(|_| copy_ok(out)),
+        OP_RENAME => volume.rename(path, aux).map(|_| copy_ok(out)),
+        OP_DF => match volume.stat_fs() {
+            Ok(info) => Ok(write_free(out, info.free_blocks)),
+            Err(error) => Err(error),
+        },
+        _ => Err(MxError::Invalid),
+    };
+    result.unwrap_or(0)
+}
+
+fn copy_ok(out: &mut [u8]) -> usize {
+    let word = b"ok";
+    let n = word.len().min(out.len());
+    out[..n].copy_from_slice(&word[..n]);
+    n
+}
+
+fn write_free(out: &mut [u8], free: u32) -> usize {
+    let prefix = b"free=";
+    let mut tmp = [0u8; 16];
+    let mut n = free;
+    let mut index = tmp.len();
+    if n == 0 {
+        index -= 1;
+        tmp[index] = b'0';
+    }
+    while n > 0 && index > 0 {
+        index -= 1;
+        tmp[index] = b'0' + (n % 10) as u8;
+        n /= 10;
+    }
+    let digits = &tmp[index..];
+    let mut len = 0usize;
+    for byte in prefix.iter().chain(digits.iter()) {
+        if len >= out.len() {
+            break;
+        }
+        out[len] = *byte;
+        len += 1;
+    }
+    len
+}
+
+fn xfer(op: u32, block: u32) -> bool {
+    unsafe {
+        ((USER_SHARE + REQ) as *mut u32).write_volatile(op);
+        ((USER_SHARE + REQ + 4) as *mut u32).write_volatile(8);
+        ((USER_SHARE + REQ + 8) as *mut u64).write_volatile(block as u64 * 8);
+        ((USER_SHARE + REQ + 16) as *mut u32).write_volatile(0);
     }
     fence(Ordering::SeqCst);
     signal_blk() && arm_reply() && wait_reply()
@@ -236,7 +362,10 @@ fn signal_blk() -> bool {
         loop {
             match take_tag(STORE_TAG) {
                 Some(RESULT_OK) => return true,
-                Some(ERR_AGAIN) => break,
+                Some(ERR_AGAIN) => {
+                    yield_once();
+                    break;
+                }
                 Some(_) => return false,
                 None => yield_once(),
             }
@@ -275,7 +404,7 @@ fn arm_reply() -> bool {
 }
 
 fn wait_reply() -> bool {
-    for _ in 0..200_000 {
+    for _ in 0..400_000 {
         syscall(SYS_RING_PROCESS, 0, 0);
         let mailbox = unsafe { (REPLY_BOX as *const u64).read_volatile() };
         if mailbox != 0 {

@@ -130,7 +130,7 @@ fn directory() -> Dir {
 
 fn list_names(names: &mut [[u8; 16]; MAX_NAMES], lens: &mut [u8; MAX_NAMES]) -> usize {
     let mut out = [0u8; 48];
-    let len = directory().list(&mut out);
+    let len = directory().list(b"/home", &mut out);
     if len == 0 || out[0] == b'?' {
         return 0;
     }
@@ -156,7 +156,15 @@ fn list_names(names: &mut [[u8; 16]; MAX_NAMES], lens: &mut [u8; MAX_NAMES]) -> 
 }
 
 fn read_record(name: &[u8], out: &mut [u8; 48]) -> usize {
-    let len = directory().read(name, out);
+    let mut path = [0u8; 32];
+    let prefix = b"/home/";
+    let n = prefix.len() + name.len();
+    if n > path.len() {
+        return 0;
+    }
+    path[..prefix.len()].copy_from_slice(prefix);
+    path[prefix.len()..n].copy_from_slice(name);
+    let len = directory().read(&path[..n], out);
     if len == 1 && out[0] == b'?' {
         0
     } else {

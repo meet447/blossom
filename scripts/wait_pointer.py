@@ -11,7 +11,24 @@ AXIS_MAX = 32767
 # Down then up. Space is `spc` and enter is `ret` in QEMU's qcode list.
 KEYS = ("e", "c", "h", "o", "spc", "h", "i", "ret")
 # A second batch. One batch of every key would overflow the 32-event queue.
-DIRECTORY = ("l", "s", "ret", "c", "a", "t", "spc", "n", "o", "t", "e", "ret")
+DIRECTORY = ("l", "s", "ret")
+CAT = (
+    "c",
+    "a",
+    "t",
+    "spc",
+    "/",
+    "h",
+    "o",
+    "m",
+    "e",
+    "/",
+    "n",
+    "o",
+    "t",
+    "e",
+    "ret",
+)
 # Fifteen key-downs is thirty events, which still fits the queue of 32.
 WRITE = (
     "w",
@@ -44,7 +61,9 @@ def main() -> None:
     wait_for(log_path, 40, terminal_ready)
     send_keys(stream, KEYS, "echo hi")
     wait_for(log_path, 40, line_ready)
-    send_keys(stream, DIRECTORY, "ls cat")
+    send_keys(stream, DIRECTORY, "ls")
+    wait_for(log_path, 40, listing_ready)
+    send_keys(stream, CAT, "cat /home/note")
     wait_for(log_path, 40, directory_ready)
     send_keys(stream, WRITE, "write hi there")
 
@@ -73,6 +92,12 @@ def terminal_ready(text: str):
 
 def line_ready(text: str):
     if "meuxe: shell line=hi" in text:
+        return True
+    return None
+
+
+def listing_ready(text: str):
+    if "meuxe: shell ls=bin etc home tmp" in text:
         return True
     return None
 

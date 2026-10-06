@@ -74,6 +74,7 @@ pub fn start() -> Result<(), &'static str> {
         let virt = USER_SHARE + ((index as u64) + 1) * 4096;
         mm::map_user_in(blk.cr3, virt, frame, UserPerm::UncachedRw)?;
         *slot = frame;
+        mm::map_user_in(vfs.cr3, virt, frame, UserPerm::UncachedRw)?;
     }
     mm::map_user_in(vfs.cr3, USER_SHARE, share, UserPerm::UncachedRw)?;
     mm::map_user_in(blk.cr3, USER_SHARE, share, UserPerm::UncachedRw)?;
@@ -144,11 +145,11 @@ pub fn note_report(task: u64, ptr: u64, len: u64) {
     let write_lo = USER_SHARE + 2048 + 16;
     let write_hi = write_lo + 512;
     let in_write = ptr >= write_lo && ptr.saturating_add(len) <= write_hi;
-    if task == task::BLK as u64 && in_sector && &bytes[..len as usize] == b"MXLG" {
-        crate::kprintln!("meuxe: blk sector=MXLG");
+    if task == task::BLK as u64 && in_sector && &bytes[..len as usize] == b"MXDF" {
+        crate::kprintln!("meuxe: blk super=MXDF");
         BLK_OK.store(true, Ordering::Release);
     }
-    if task == task::BLK as u64 && in_write && &bytes[..len as usize] == b"MXLG" {
+    if task == task::BLK as u64 && in_write && &bytes[..len as usize] == b"MXDF" {
         if DIRECTORY_STORED.swap(true, Ordering::AcqRel) {
             crate::kprintln!("meuxe: fs write=ok");
         } else {
@@ -158,6 +159,14 @@ pub fn note_report(task: u64, ptr: u64, len: u64) {
     if task == task::VFS as u64 && in_sector && &bytes[..len as usize] == b"meuxe-phase3" {
         crate::kprintln!("meuxe: vfs note=meuxe-phase3");
         VFS_OK.store(true, Ordering::Release);
+    }
+    if task == task::VFS as u64 && &bytes[..len as usize] == b"MOUNT" {
+        crate::kprintln!("meuxe: vfs mount=MXDF blocks=16384 inodes=256 mounts=1");
+    }
+    if task == task::TERMINAL as u64 {
+        if let Ok(text) = core::str::from_utf8(&bytes[..len as usize]) {
+            crate::kprintln!("meuxe: shell {text}");
+        }
     }
     if task == task::BLK as u64 && &bytes[..len as usize] == b"RNG!" {
         crate::kprintln!("meuxe: blk range lba=8 sectors=64 ok");

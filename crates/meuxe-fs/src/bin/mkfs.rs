@@ -2,7 +2,7 @@
 
 use meuxe_fs::mxdf::{BlockDev, CREATE, Volume, BLOCK, MxError};
 use std::env;
-use std::fs::File;
+use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, Write};
 use std::process::ExitCode;
 
@@ -15,7 +15,12 @@ struct FileDisk {
 
 impl FileDisk {
     fn create(path: &str) -> std::io::Result<Self> {
-        let file = File::create(path)?;
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(path)?;
         file.set_len(IMAGE_BYTES as u64)?;
         Ok(Self { file })
     }
@@ -26,8 +31,14 @@ impl BlockDev for FileDisk {
         let off = block as u64 * BLOCK as u64;
         self.file
             .seek(std::io::SeekFrom::Start(off))
-            .map_err(|_| MxError::Io)?;
-        self.file.read_exact(buf).map_err(|_| MxError::Io)?;
+            .map_err(|err| {
+                eprintln!("mkfs read seek block {block}: {err}");
+                MxError::Io
+            })?;
+        self.file.read_exact(buf).map_err(|err| {
+            eprintln!("mkfs read block {block}: {err}");
+            MxError::Io
+        })?;
         Ok(())
     }
 
@@ -35,8 +46,14 @@ impl BlockDev for FileDisk {
         let off = block as u64 * BLOCK as u64;
         self.file
             .seek(std::io::SeekFrom::Start(off))
-            .map_err(|_| MxError::Io)?;
-        self.file.write_all(buf).map_err(|_| MxError::Io)?;
+            .map_err(|err| {
+                eprintln!("mkfs write seek block {block}: {err}");
+                MxError::Io
+            })?;
+        self.file.write_all(buf).map_err(|err| {
+            eprintln!("mkfs write block {block}: {err}");
+            MxError::Io
+        })?;
         Ok(())
     }
 }

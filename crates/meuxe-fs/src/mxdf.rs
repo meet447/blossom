@@ -430,7 +430,7 @@ impl<D: BlockDev> Volume<D> {
         } else {
             self.block_buf[byte] &= !(1 << bit);
         }
-        Ok(())
+        self.write_bitmap()
     }
 
     fn bitmap_is_set(&mut self, block: u32) -> Result<bool, MxError> {

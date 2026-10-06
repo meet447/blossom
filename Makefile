@@ -33,7 +33,7 @@ user:
 initramfs: user
 	mkdir -p target
 	cargo run -p meuxe-fs --bin pack -- target/initramfs.bin vfs=$(VFS_ELF) blk=$(BLK_ELF) compositor=$(COMP_ELF) client=$(CLIENT_ELF) files=$(FILES_ELF) calc=$(CALC_ELF) input=$(INPUT_ELF)
-	cargo run -p meuxe-fs --bin packlog -- $(DISK)
+	cargo run -p meuxe-fs --bin mkfs -- $(DISK)
 
 kernel: initramfs
 	cargo build -p meuxe-kernel --release --target x86_64-unknown-none
@@ -127,10 +127,12 @@ verify: kernel-verify $(LIMINE_DIR)/limine
 	grep -q "meuxe: elf=blk" target/boot.log; \
 	grep -q "meuxe: cr3 distinct" target/boot.log; \
 	grep -q "meuxe: virtio-blk" target/boot.log; \
-	grep -q "meuxe: blk sector=MXLG" target/boot.log; \
+	grep -q "meuxe: blk super=MXDF" target/boot.log; \
 	grep -q "meuxe: blk capacity=131072" target/boot.log; \
 	grep -q "meuxe: blk range lba=8 sectors=64 ok" target/boot.log; \
+	grep -q "meuxe: vfs mount=MXDF blocks=16384 inodes=256 mounts=1" target/boot.log; \
 	grep -q "meuxe: vfs note=meuxe-phase3" target/boot.log; \
+	grep -q "meuxe: shell ls=bin etc home tmp" target/boot.log; \
 	grep -q "meuxe: storage ready" target/boot.log; \
 	grep -q "meuxe: desktop fb " target/boot.log; \
 	grep -q "meuxe: tablet listening" target/boot.log; \

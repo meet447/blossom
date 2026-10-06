@@ -17,7 +17,7 @@ static READY_PHYS: AtomicU64 = AtomicU64::new(0);
 static FAILED: AtomicBool = AtomicBool::new(false);
 static LOGGED: AtomicBool = AtomicBool::new(false);
 
-const LISTING: &[u8] = b"note hello disk";
+const LISTING: &[u8] = b"bin etc home tmp";
 const NOTE: &[u8] = b"meuxe-phase3";
 const STORED: &[u8] = b"there";
 
@@ -84,7 +84,7 @@ pub fn wait_directory(boot: &BootInfo) -> Result<(), &'static str> {
     while sched::ticks().wrapping_sub(start) <= 4000 {
         if !saw_list && row_has(&fb, LISTING) {
             saw_list = true;
-            crate::kprintln!("meuxe: shell ls=note hello disk");
+            crate::kprintln!("meuxe: shell ls=bin etc home tmp");
         }
         if !saw_note && row_has(&fb, NOTE) {
             saw_note = true;
