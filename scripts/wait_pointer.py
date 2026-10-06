@@ -66,6 +66,10 @@ def main() -> None:
     send_keys(stream, CAT, "cat /home/note")
     wait_for(log_path, 40, directory_ready)
     send_keys(stream, WRITE, "write hi there")
+    wait_for(log_path, 40, write_ready)
+    for command, marker in FS_STEPS:
+        send_keys(stream, qcodes(command), command)
+        wait_for(log_path, 40, lambda text, marker=marker: True if marker in text else None)
 
 
 def listening(text: str):
@@ -97,7 +101,7 @@ def line_ready(text: str):
 
 
 def listing_ready(text: str):
-    if "meuxe: shell ls=bin etc home tmp" in text:
+    if "meuxe: shell ls=/ bin etc home tmp" in text:
         return True
     return None
 
@@ -106,6 +110,40 @@ def directory_ready(text: str):
     if "meuxe: directory ready" in text:
         return True
     return None
+
+
+def write_ready(text: str):
+    if "meuxe: write ready" in text:
+        return True
+    return None
+
+
+FS_STEPS = (
+    ("mkdir /tmp/d", "meuxe: shell mkdir=/tmp/d ok"),
+    ("write /tmp/d/a one", "meuxe: shell write=/tmp/d/a ok"),
+    ("append /tmp/d/a two", "meuxe: shell append=/tmp/d/a ok"),
+    ("cp /tmp/d/a /tmp/d/b", "meuxe: shell cp=/tmp/d/b ok"),
+    ("mv /tmp/d/b /home/b", "meuxe: shell mv=/home/b ok"),
+    ("cat /home/b", "meuxe: shell cat=/home/b onetwo"),
+    ("rm /tmp/d/a", "meuxe: shell rm=/tmp/d/a ok"),
+    ("rm /tmp/d", "meuxe: shell rm=/tmp/d ok"),
+    ("df", "meuxe: shell df free="),
+)
+
+
+def qcodes(text: str):
+    keys = []
+    for ch in text:
+        if ch == " ":
+            keys.append("spc")
+        elif ch == "/":
+            keys.append("slash")
+        elif "a" <= ch <= "z":
+            keys.append(ch)
+        else:
+            raise SystemExit(f"no qcode for {ch!r}")
+    keys.append("ret")
+    return tuple(keys)
 
 
 def wait_for(log_path: str, seconds: float, parse):

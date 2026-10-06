@@ -89,7 +89,7 @@ verify: kernel-verify $(LIMINE_DIR)/limine
 	python3 scripts/wait_pointer.py target/boot.log target/qmp.sock > target/qmp.log 2>&1 & \
 	waiter=$$!; \
 	set +e; \
-	timeout 90s qemu-system-x86_64 \
+	timeout 150s qemu-system-x86_64 \
 		-machine q35 \
 		-cpu qemu64 \
 		-m 512M \
@@ -132,7 +132,7 @@ verify: kernel-verify $(LIMINE_DIR)/limine
 	grep -q "meuxe: blk range lba=8 sectors=64 ok" target/boot.log; \
 	grep -q "meuxe: vfs mount=MXDF blocks=16384 inodes=256 mounts=1" target/boot.log; \
 	grep -q "meuxe: vfs note=meuxe-phase3" target/boot.log; \
-	grep -q "meuxe: shell ls=bin etc home tmp" target/boot.log; \
+	grep -q "meuxe: shell ls=/ bin etc home tmp" target/boot.log; \
 	grep -q "meuxe: storage ready" target/boot.log; \
 	grep -q "meuxe: desktop fb " target/boot.log; \
 	grep -q "meuxe: tablet listening" target/boot.log; \
@@ -153,7 +153,11 @@ verify: kernel-verify $(LIMINE_DIR)/limine
 	grep -q "meuxe: directory ready" target/boot.log; \
 	grep -q "meuxe: fs write=ok" target/boot.log; \
 	grep -q "meuxe: shell wrote=there" target/boot.log; \
-	grep -q "meuxe: write ready" target/boot.log
+	grep -q "meuxe: write ready" target/boot.log; \
+	grep -q "meuxe: shell mkdir=/tmp/d ok" target/boot.log; \
+	grep -q "meuxe: shell cat=/home/b onetwo" target/boot.log; \
+	grep -q "meuxe: shell rm=/tmp/d ok" target/boot.log; \
+	grep -q "meuxe: shell df free=" target/boot.log
 
 run: iso
 	cp $(OVMF_VARS_SRC) $(OVMF_VARS)

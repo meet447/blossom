@@ -260,6 +260,44 @@ fn resolve(name: &[u8], dst: &mut [u8; 64]) -> usize {
     len + n
 }
 
+fn report_ok(prefix: &[u8], path: &[u8]) {
+    let mut msg = [0u8; 32];
+    let mut len = 0usize;
+    for &byte in prefix.iter().chain(path.iter()) {
+        if len + 3 >= msg.len() {
+            break;
+        }
+        msg[len] = byte;
+        len += 1;
+    }
+    msg[len..len + 3].copy_from_slice(b" ok");
+    report_line(&msg[..len + 3]);
+}
+
+fn report_cat(path: &[u8], body: &[u8]) {
+    let mut msg = [0u8; 32];
+    let mut len = 0usize;
+    for &byte in b"cat=".iter().chain(path.iter()) {
+        if len + 1 >= msg.len() {
+            break;
+        }
+        msg[len] = byte;
+        len += 1;
+    }
+    if len < msg.len() {
+        msg[len] = b' ';
+        len += 1;
+    }
+    for &byte in body {
+        if len >= msg.len() {
+            break;
+        }
+        msg[len] = byte;
+        len += 1;
+    }
+    report_line(&msg[..len]);
+}
+
 fn report_line(text: &[u8]) {
     let n = text.len().min(32);
     unsafe {
@@ -287,7 +325,11 @@ fn directory_output<'a>(line: &[u8], owned: &'a mut [u8; 48]) -> Option<&'a [u8]
         if count == 0 {
             return Some(b"?");
         }
-        report_line(&owned[..count.min(32)]);
+        let mut msg = [0u8; 32];
+        msg[..3].copy_from_slice(b"df ");
+        let n = count.min(29);
+        msg[3..3 + n].copy_from_slice(&owned[..n]);
+        report_line(&msg[..3 + n]);
         return Some(&owned[..count]);
     }
     if let Some(rest) = strip(line, b"cd ") {
@@ -305,7 +347,11 @@ fn directory_output<'a>(line: &[u8], owned: &'a mut [u8; 48]) -> Option<&'a [u8]
     if let Some(rest) = strip(line, b"cat ") {
         let n = resolve(rest, &mut path);
         let count = fs_query(2, &path[..n], b"", 0, b"", owned);
-        return if count == 0 { Some(b"?") } else { Some(&owned[..count]) };
+        if count == 0 {
+            return Some(b"?");
+        }
+        report_cat(&path[..n], &owned[..count]);
+        return Some(&owned[..count]);
     }
     if line == b"cat" {
         return Some(b"?");
@@ -367,16 +413,11 @@ fn directory_output<'a>(line: &[u8], owned: &'a mut [u8; 48]) -> Option<&'a [u8]
         };
         let n = resolve(name, &mut path);
         let count = fs_query(3, &path[..n], data, 4, b"", owned);
-        return if count == 0 { Some(b"?") } else { Some(&owned[..count]) };
-    }
-    if let Some(rest) = strip(line, b"mv ") {
-        let Some((src, dst)) = split_two(rest) else {
+        if count == 0 {
             return Some(b"?");
-        };
-        let n = resolve(src, &mut path);
-        let m = resolve(dst, &mut aux);
-        let count = fs_query(7, &path[..n], b"", 0, &aux[..m], owned);
-        return if count == 0 { Some(b"?") } else { Some(&owned[..count]) };
+        }
+        report_ok(b"append=", &path[..n]);
+        return Some(&owned[..count]);
     }
     if let Some(rest) = strip(line, b"cp ") {
         let Some((src, dst)) = split_two(rest) else {
@@ -391,7 +432,24 @@ fn directory_output<'a>(line: &[u8], owned: &'a mut [u8; 48]) -> Option<&'a [u8]
         let mut body = [0u8; 48];
         body[..count].copy_from_slice(&owned[..count]);
         let wrote = fs_query(3, &aux[..m], &body[..count], 1 | 2, b"", owned);
-        return if wrote == 0 { Some(b"?") } else { Some(b"ok") };
+        if wrote == 0 {
+            return Some(b"?");
+        }
+        report_ok(b"cp=", &aux[..m]);
+        return Some(b"ok");
+    }
+    if let Some(rest) = strip(line, b"mv ") {
+        let Some((src, dst)) = split_two(rest) else {
+            return Some(b"?");
+        };
+        let n = resolve(src, &mut path);
+        let m = resolve(dst, &mut aux);
+        let count = fs_query(7, &path[..n], b"", 0, &aux[..m], owned);
+        if count == 0 {
+            return Some(b"?");
+        }
+        report_ok(b"mv=", &aux[..m]);
+        return Some(&owned[..count]);
     }
     if let Some(rest) = strip(line, b"write ") {
         let Some((name, data)) = split_two(rest) else {
@@ -399,7 +457,11 @@ fn directory_output<'a>(line: &[u8], owned: &'a mut [u8; 48]) -> Option<&'a [u8]
         };
         let n = resolve(name, &mut path);
         let count = fs_query(3, &path[..n], data, 1 | 2, b"", owned);
-        return if count == 0 { Some(b"?") } else { Some(&owned[..count]) };
+        if count == 0 {
+            return Some(b"?");
+        }
+        report_ok(b"write=", &path[..n]);
+        return Some(&owned[..count]);
     }
     None
 }

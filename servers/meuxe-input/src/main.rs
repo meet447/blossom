@@ -28,9 +28,9 @@ global_asm!(
 
 const POINTER_CAP: u32 = 1;
 const KEY_CAP: u32 = 2;
-const QUEUE: u16 = 32;
-const AVAIL: u64 = 0x200;
-const USED: u64 = 0x800;
+const QUEUE: u16 = 64;
+const AVAIL: u64 = 0x400;
+const USED: u64 = 0x500;
 const ACKNOWLEDGE: u8 = 1;
 const DRIVER: u8 = 2;
 const DRIVER_OK: u8 = 4;
@@ -60,7 +60,7 @@ struct Dev {
 }
 
 struct Keys {
-    buf: [u16; 32],
+    buf: [u16; 64],
     head: usize,
     len: usize,
 }
@@ -126,7 +126,7 @@ extern "C" fn main() -> ! {
     let mut key_inflight = false;
     let mut pending_key = 0u16;
     let mut keys = Keys {
-        buf: [0; 32],
+        buf: [0; 64],
         head: 0,
         len: 0,
     };

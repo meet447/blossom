@@ -28,6 +28,7 @@ pub fn finish(boot: &BootInfo) -> Result<(), &'static str> {
     crate::kprintln!("meuxe: directory ready");
     wait_record(boot)?;
     crate::kprintln!("meuxe: write ready");
+    wait_free(boot)?;
     Ok(())
 }
 
@@ -84,7 +85,7 @@ pub fn wait_directory(boot: &BootInfo) -> Result<(), &'static str> {
     while sched::ticks().wrapping_sub(start) <= 4000 {
         if !saw_list && row_has(&fb, LISTING) {
             saw_list = true;
-            crate::kprintln!("meuxe: shell ls=bin etc home tmp");
+            crate::kprintln!("meuxe: shell ls=/ bin etc home tmp");
         }
         if !saw_note && row_has(&fb, NOTE) {
             saw_note = true;
@@ -112,6 +113,17 @@ pub fn wait_record(boot: &BootInfo) -> Result<(), &'static str> {
         cpu::hlt();
     }
     Err("terminal did not print the new record")
+}
+
+pub fn wait_free(boot: &BootInfo) -> Result<(), &'static str> {
+    let start = sched::ticks();
+    while sched::ticks().wrapping_sub(start) <= 8000 {
+        if shows(boot, b"free=") {
+            return Ok(());
+        }
+        cpu::hlt();
+    }
+    Err("terminal did not print free space")
 }
 
 fn non_zero(value: u64) -> Option<u64> {
