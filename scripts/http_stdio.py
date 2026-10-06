@@ -13,7 +13,12 @@ RESP = (
 
 
 def main() -> None:
-    sys.stdin.buffer.read()
+    buf = b""
+    while b"\r\n\r\n" not in buf and len(buf) < 4096:
+        chunk = sys.stdin.buffer.read(1)
+        if not chunk:
+            break
+        buf += chunk
     sys.stdout.buffer.write(RESP)
     sys.stdout.buffer.flush()
 

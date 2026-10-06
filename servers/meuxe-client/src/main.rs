@@ -517,7 +517,7 @@ fn directory_output<'a>(line: &[u8], owned: &'a mut [u8; 48]) -> Option<&'a [u8]
         let take = reply.len().min(msg.len() - pos);
         msg[pos..pos + take].copy_from_slice(&reply[..take]);
         report_line(&msg[..pos + take]);
-        let body_start = reply.windows(6).position(|w| w == b"body=");
+        let body_start = reply.windows(5).position(|w| w == b"body=");
         let body = if let Some(at) = body_start {
             &reply[at + 5..]
         } else {
