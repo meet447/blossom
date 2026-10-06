@@ -130,6 +130,9 @@ pub fn exit(task: u8, code: u32) -> ! {
 }
 
 pub fn kill_fault(task: u8, vector: u64, cr2: u64) {
+    if unsafe { CHILD_ZOMBIE[task as usize] } {
+        return;
+    }
     crate::kprintln!(
         "meuxe: fault task={task} vector={vector} cr2={cr2:#x} killed"
     );
