@@ -1,0 +1,16 @@
+[package]
+name = "meuxe-ui"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+publish = false
+description = "Toolkit for Meuxe desktop apps"
+
+[dependencies]
+meuxe-abi = { path = "../meuxe-abi" }
+meuxe-font = { path = "../meuxe-font" }
+meuxe-rt = { path = "../../servers/meuxe-rt", optional = true }
+
+[features]
+default = []
+app = ["dep:meuxe-rt"]

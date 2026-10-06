@@ -1,0 +1,21 @@
+[package]
+name = "meuxe-compositor"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+publish = false
+description = "Meuxe framebuffer compositor"
+
+[[bin]]
+name = "meuxe-compositor"
+path = "src/main.rs"
+test = false
+doctest = false
+bench = false
+
+[dependencies]
+meuxe-abi = { path = "../../crates/meuxe-abi" }
+meuxe-font = { path = "../../crates/meuxe-font" }
+meuxe-logo = { path = "../../crates/meuxe-logo" }
+meuxe-rt = { path = "../meuxe-rt" }
+meuxe-ui = { path = "../../crates/meuxe-ui" }

@@ -1,0 +1,29 @@
+[package]
+name = "meuxe-kernel"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+publish = false
+description = "Meuxe microkernel, x86_64"
+
+autobins = false
+
+[features]
+# Exit QEMU through the isa-debug-exit device after the boot invariant checks.
+verify = []
+
+[[bin]]
+name = "meuxe-kernel"
+path = "src/main.rs"
+test = false
+doctest = false
+bench = false
+
+[dependencies]
+meuxe-mm = { path = "../crates/meuxe-mm" }
+meuxe-abi = { path = "../crates/meuxe-abi" }
+meuxe-cap = { path = "../crates/meuxe-cap" }
+meuxe-elf = { path = "../crates/meuxe-elf" }
+meuxe-fs = { path = "../crates/meuxe-fs" }
+meuxe-font = { path = "../crates/meuxe-font" }
+meuxe-logo = { path = "../crates/meuxe-logo" }

@@ -1,0 +1,27 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/meuxe-mm",
+    "crates/meuxe-abi",
+    "crates/meuxe-cap",
+    "crates/meuxe-elf",
+    "crates/meuxe-fs",
+    "crates/meuxe-font",
+    "crates/meuxe-logo",
+    "crates/meuxe-ui",
+    "servers/meuxe-rt",
+    "servers/meuxe-vfs",
+    "servers/meuxe-blk",
+    "servers/meuxe-compositor",
+    "servers/meuxe-client",
+    "servers/meuxe-files",
+    "servers/meuxe-calc",
+    "servers/meuxe-input",
+    "kernel",
+]
+
+[profile.release]
+opt-level = 2
+lto = false
+codegen-units = 1
+debug = 1
