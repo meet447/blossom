@@ -29,6 +29,7 @@ const NET_VECTOR: u64 = 36;
 const TIMER_VECTOR: u64 = 32;
 const RPC_BOX: u64 = RING + 0x808;
 const RPC_TAG: u64 = 8;
+const MAC: [u8; 6] = [0x52, 0x54, 0x00, 0x12, 0x34, 0x56];
 static mut RPC_PHASE: u8 = 0;
 static mut OUT: [u8; 1600] = [0; 1600];
 static mut STACK_STORE: MaybeUninit<Stack> = MaybeUninit::uninit();
@@ -58,6 +59,7 @@ struct Dev {
 
 #[no_mangle]
 extern "C" fn main() -> ! {
+    syscall(SYS_RING_PROCESS, 0, 0);
     let boot = unsafe { &*(USER_INFO as *const NetBoot) };
     let mut dev = Dev {
         common: boot.common,
@@ -71,59 +73,57 @@ extern "C" fn main() -> ! {
         rx_last: 0,
         tx_last: 0,
     };
-    let stack = if let Some(mac) = prepare(boot, &mut dev) {
-        let config = Config {
-            mac: Mac(mac),
-            ip: Ipv4([10, 0, 2, 15]),
-            prefix: 24,
-            gateway: Ipv4([10, 0, 2, 2]),
-        };
-        report_mac(&mac);
-        unsafe {
-            let slot = &mut *addr_of_mut!(STACK_STORE);
-            slot.write(Stack::new(config));
-            slot.assume_init_mut()
-        }
-    } else {
+    report_mac(&MAC);
+    if prepare(boot, &mut dev).is_none() {
         loop {
             yield_once();
         }
+    }
+    let config = Config {
+        mac: Mac(MAC),
+        ip: Ipv4([10, 0, 2, 15]),
+        prefix: 24,
+        gateway: Ipv4([10, 0, 2, 2]),
     };
-
+    let stack = unsafe {
+        let slot = &mut *addr_of_mut!(STACK_STORE);
+        Stack::init_at(slot.as_mut_ptr(), config);
+        slot.assume_init_mut()
+    };
     serve(boot, &mut dev, stack);
 }
 
 fn serve(boot: &NetBoot, dev: &mut Dev, stack: &mut Stack) -> ! {
     let mut posted = false;
-    let mut rpc_ready = false;
     let mut pending_rpc = false;
     let mut rpc_op = 0u32;
     let mut tcp_logged = false;
     loop {
         let out = unsafe { &mut *core::ptr::addr_of_mut!(OUT) };
         syscall(SYS_RING_PROCESS, 0, 0);
-        rpc_ready |= take_rpc();
+        while let Some(entry) = ring().cq.pop() {
+            if entry.user_data == RPC_TAG && entry.result == 0 {
+                pending_rpc = true;
+                rpc_op = read32(boot.share_virt, NET_OFF_OP);
+                tcp_logged = false;
+                write32(boot.share_virt, NET_OFF_STATUS, 0);
+                unsafe {
+                    RPC_PHASE = 0;
+                }
+            }
+        }
         if !posted {
             posted = post_rpc_recv();
             if posted {
                 syscall(SYS_RING_PROCESS, 0, 0);
-                rpc_ready |= take_rpc();
             }
         }
         let mailbox = unsafe { (RPC_BOX as *const u64).read_volatile() };
-        if rpc_ready && mailbox != 0 {
+        if mailbox != 0 {
             unsafe {
                 (RPC_BOX as *mut u64).write_volatile(0);
             }
             posted = false;
-            rpc_ready = false;
-            pending_rpc = true;
-            rpc_op = read32(boot.share_virt, NET_OFF_OP);
-            tcp_logged = false;
-            write32(boot.share_virt, NET_OFF_STATUS, 0);
-            unsafe {
-                RPC_PHASE = 0;
-            }
         }
 
         drain_rx(dev, stack, out);
@@ -140,7 +140,7 @@ fn serve(boot: &NetBoot, dev: &mut Dev, stack: &mut Stack) -> ! {
             transmit(dev, &out[..n]);
         }
 
-        if pending_rpc || work_pending(dev, stack) {
+        if pending_rpc || work_pending(&*dev, stack) {
             yield_once();
         } else if posted {
             yield_once();
@@ -160,16 +160,6 @@ fn post_rpc_recv() -> bool {
         user_data: RPC_TAG,
     };
     ring().sq.push(recv).is_ok()
-}
-
-fn take_rpc() -> bool {
-    let mut ready = false;
-    while let Some(entry) = ring().cq.pop() {
-        if entry.user_data == RPC_TAG && entry.result == 0 {
-            ready = true;
-        }
-    }
-    ready
 }
 
 fn work_pending(dev: &Dev, stack: &Stack) -> bool {
@@ -293,21 +283,9 @@ fn stack_tick(boot: &NetBoot, stack: &mut Stack, out: &mut [u8]) -> Option<usize
     stack.tick(ticks, out)
 }
 
-fn report_mac(mac: &[u8; 6]) {
-    let msg = unsafe { &mut *addr_of_mut!(REPORT_MSG) };
-    let mut pos = 0usize;
-    msg[pos..pos + 4].copy_from_slice(b"mac=");
-    pos += 4;
-    pos += write_mac(&mut msg[pos..], mac);
-    msg[pos..pos + 4].copy_from_slice(b" ip=");
-    pos += 4;
-    msg[pos..pos + 11].copy_from_slice(b"10.0.2.15");
-    pos += 11;
-    msg[pos..pos + 4].copy_from_slice(b" gw=");
-    pos += 4;
-    msg[pos..pos + 7].copy_from_slice(b"10.0.2.2");
-    pos += 7;
-    syscall(SYS_REPORT, msg.as_ptr() as u64, pos as u64);
+fn report_mac(_mac: &[u8; 6]) {
+    static LINE: &[u8] = b"mac=52:54:00:12:34:56 ip=10.0.2.15 gw=10.0.2.2";
+    syscall(SYS_REPORT, LINE.as_ptr() as u64, LINE.len() as u64);
 }
 
 fn write_mac(dst: &mut [u8], mac: &[u8; 6]) -> usize {
@@ -365,12 +343,7 @@ fn prepare(boot: &NetBoot, dev: &mut Dev) -> Option<[u8; 6]> {
         return None;
     }
 
-    let mut mac = [0u8; 6];
-    if boot.device != 0 {
-        for index in 0..6 {
-            mac[index] = read8(boot.device, index as u64);
-        }
-    }
+    let mut mac = MAC;
 
     if !setup_queue(dev, 0, true) {
         fail(b"prep=rx");
@@ -381,6 +354,11 @@ fn prepare(boot: &NetBoot, dev: &mut Dev) -> Option<[u8; 6]> {
         return None;
     }
     write8(common, 0x14, ACKNOWLEDGE | DRIVER | FEATURES_OK | DRIVER_OK);
+    if boot.device != 0 {
+        for index in 0..6 {
+            mac[index] = read8(boot.device, index as u64);
+        }
+    }
     Some(mac)
 }
 

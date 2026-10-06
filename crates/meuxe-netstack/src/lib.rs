@@ -183,6 +183,12 @@ impl Stack {
         }
     }
 
+    /// # Safety
+    /// `ptr` must reference a zeroed [`Stack`] (for example static BSS).
+    pub unsafe fn init_at(ptr: *mut Stack, config: Config) {
+        (*ptr).config = config;
+    }
+
     pub fn recv(&mut self, frame: &[u8], out: &mut [u8]) -> Option<usize> {
         self.counters.rx_frames += 1;
         if frame.len() < HDR {

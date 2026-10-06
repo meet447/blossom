@@ -87,7 +87,7 @@ fn map_segment(
     Ok(())
 }
 
-const STACK_PAGES: u64 = 8;
+const STACK_PAGES: u64 = 32;
 
 fn map_user_stack(cr3: u64) -> Result<(), &'static str> {
     let low = USER_STACK - (STACK_PAGES - 1) * 0x1000;

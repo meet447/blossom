@@ -84,7 +84,7 @@ pub fn start() -> Result<(), &'static str> {
         notify,
         device: device_va,
         notify_mul: device.notify_mul,
-        queue_size: 2,
+        queue_size: 32,
         dma_phys,
         dma_virt: USER_NET_DMA,
         share_phys: share,
