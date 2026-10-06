@@ -322,3 +322,18 @@ fn full_completion_queue_leaves_the_submission() {
     assert_eq!(stats, ProcessStats { submitted: 0, completed: 0 });
     assert_eq!(sq.len(), 1);
 }
+
+#[test]
+fn irq_capability_is_visible_in_slot_order() {
+    let mut caps = CapSpace::new();
+    let blk = task(11);
+    let first = caps.create(ObjectKind::Irq { vector: 33 }).unwrap();
+    let second = caps.create(ObjectKind::Irq { vector: 36 }).unwrap();
+    caps.install(blk, first, Rights::READ).unwrap();
+    caps.install(blk, second, Rights::READ).unwrap();
+    assert_eq!(caps.first_irq(blk), Some(33));
+    assert!(caps.has_irq(blk, 33));
+    assert!(caps.has_irq(blk, 36));
+    assert!(!caps.has_irq(blk, 34));
+    assert_eq!(caps.first_irq(task(12)), None);
+}

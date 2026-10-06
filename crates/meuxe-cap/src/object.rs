@@ -2,7 +2,7 @@
 
 use meuxe_abi::CapType;
 
-pub const MAX_OBJECTS: usize = 64;
+pub const MAX_OBJECTS: usize = 256;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ObjectId(u16);

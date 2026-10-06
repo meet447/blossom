@@ -183,10 +183,16 @@ fn install_caps(share: u64, mmio_phys: u64) -> Result<(), &'static str> {
         let mmio_handle = caps
             .install(blk, mmio, rw)
             .map_err(|_| "installing the blk mmio capability failed")?;
+        let irq = caps
+            .create(ObjectKind::Irq { vector: 33 })
+            .map_err(|_| "irq object table is full")?;
+        caps.install(blk, irq, Rights::READ)
+            .map_err(|_| "installing the blk irq capability failed")?;
         if vfs_ep.raw() != 1 || blk_ep.raw() != 1 {
             return Err("storage endpoint handle is not 1");
         }
         crate::kprintln!("meuxe: mmio_cap={}", mmio_handle.raw());
+        crate::kprintln!("meuxe: irq cap task={} vector=33", task::BLK);
         Ok(())
     })
 }

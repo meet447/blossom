@@ -13,8 +13,8 @@ pub use cspace::{CapError, CapSpace, Slot};
 pub use ipc::{process, CompletionSink, ProcessStats, UserMem};
 pub use object::{ObjectId, ObjectKind, Parked, TaskId};
 
-pub const MAX_OBJECTS: usize = 64;
-pub const MAX_TASKS: usize = 16;
+pub const MAX_OBJECTS: usize = 256;
+pub const MAX_TASKS: usize = 64;
 pub const SLOTS_PER_TASK: usize = 32;
 
 #[cfg(test)]

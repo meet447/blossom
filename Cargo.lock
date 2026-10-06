@@ -101,6 +101,10 @@ name = "meuxe-mm"
 version = "0.1.0"
 
 [[package]]
+name = "meuxe-netstack"
+version = "0.1.0"
+
+[[package]]
 name = "meuxe-rt"
 version = "0.1.0"
 dependencies = [

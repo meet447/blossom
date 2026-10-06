@@ -54,7 +54,7 @@ extern "C" fn syscall_dispatch(number: u64, a0: u64, a1: u64) -> u64 {
             0
         }
         meuxe_abi::SYS_WAIT_IRQ => {
-            crate::dev::irq::wait(a0, a1);
+            crate::dev::irq::wait(task, a0, a1);
             0
         }
         meuxe_abi::SYS_YIELD => {

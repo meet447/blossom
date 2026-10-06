@@ -120,6 +120,8 @@ verify: kernel-verify $(LIMINE_DIR)/limine
 	grep -E -q "meuxe: sched ap_task=8 cpu=1 count=[1-9][0-9]* steals=[1-9]" target/boot.log; \
 	grep -q "meuxe: syscall task=9 submit=4" target/boot.log; \
 	grep -q "meuxe: user yield status=0" target/boot.log; \
+	grep -q "meuxe: tasks max=64 idle=0-7 dyn=24-63" target/boot.log; \
+	grep -q "meuxe: irq lanes=32-47" target/boot.log; \
 	grep -q "meuxe: sched ready" target/boot.log; \
 	grep -q "meuxe: elf=vfs" target/boot.log; \
 	grep -q "meuxe: elf=blk" target/boot.log; \
@@ -135,6 +137,8 @@ verify: kernel-verify $(LIMINE_DIR)/limine
 	grep -q "meuxe: virtio-tablet msix vector=34" target/boot.log; \
 	grep -q "meuxe: tablet irq" target/boot.log; \
 	grep -q "meuxe: desktop ready" target/boot.log; \
+	grep -q "meuxe: calc task=16" target/boot.log; \
+	grep -q "meuxe: irq cap task=11 vector=33" target/boot.log; \
 	grep -q "meuxe: kbd listening" target/boot.log; \
 	grep -q "meuxe: virtio-keyboard msix vector=35" target/boot.log; \
 	grep -q "meuxe: kbd irq" target/boot.log; \

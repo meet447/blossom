@@ -55,6 +55,7 @@ pub fn bringup() -> BootInfo {
     };
     gdt::init_cpu(0, 0);
     idt::init();
+    crate::dev::irq::announce();
     mm::activate_and_record(pml4);
     crate::kprintln!("meuxe: cr3 live {:#x}", cpu::read_cr3());
     crate::kprintln!("meuxe: post_switch free={}", mm::free_frames());

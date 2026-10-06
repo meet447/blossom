@@ -6,6 +6,8 @@
 
 #![no_std]
 
+pub mod mxdf;
+
 pub const ARCHIVE_MAGIC: u32 = 0x5346_584D;
 pub const LOG_MAGIC: u32 = 0x474C_584D;
 pub const LOG_VERSION: u32 = 1;

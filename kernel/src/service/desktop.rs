@@ -289,6 +289,7 @@ pub fn start(boot: &BootInfo) -> Result<(), &'static str> {
     sched::spawn_user_elf(task::FILES, files.entry, files.cr3);
     sched::spawn_user_elf(task::CALC, calc.entry, calc.cr3);
     crate::kprintln!("meuxe: files window");
+    crate::kprintln!("meuxe: calc task={}", task::CALC);
     crate::kprintln!("meuxe: calc window");
 
     if !cfg!(feature = "verify") {
@@ -446,6 +447,16 @@ fn install_caps(fb_phys: u64, fb_len: u64) -> Result<(), &'static str> {
         if calc_ep.raw() != 1 || comp_calc.raw() != 5 {
             return Err("calc handles are not 1 and 5");
         }
+        let tablet_irq = caps
+            .create(ObjectKind::Irq { vector: 34 })
+            .map_err(|_| "tablet irq object table is full")?;
+        let kbd_irq = caps
+            .create(ObjectKind::Irq { vector: 35 })
+            .map_err(|_| "keyboard irq object table is full")?;
+        caps.install(input, tablet_irq, Rights::READ)
+            .map_err(|_| "installing the tablet irq capability failed")?;
+        caps.install(input, kbd_irq, Rights::READ)
+            .map_err(|_| "installing the keyboard irq capability failed")?;
         Ok(())
     })
 }

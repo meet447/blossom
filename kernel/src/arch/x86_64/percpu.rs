@@ -27,7 +27,7 @@ pub struct PerCpu {
     pub yield_requested: AtomicU64,
     pub queue_lock: AtomicBool,
     pub queue_len: u64,
-    pub queue: [u8; 16],
+    pub queue: [u8; 64],
 }
 
 const _: () = assert!(core::mem::offset_of!(PerCpu, kernel_rsp) == KERNEL_RSP);
@@ -48,7 +48,7 @@ impl PerCpu {
             yield_requested: AtomicU64::new(0),
             queue_lock: AtomicBool::new(false),
             queue_len: 0,
-            queue: [0; 16],
+            queue: [0; 64],
         }
     }
 }

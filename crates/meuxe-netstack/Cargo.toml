@@ -1,0 +1,10 @@
+[package]
+name = "meuxe-netstack"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+publish = false
+description = "In-tree Ethernet/IPv4 stack for Meuxe"
+
+[lib]
+path = "src/lib.rs"

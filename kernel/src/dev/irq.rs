@@ -1,34 +1,37 @@
 //! Virtio completion interrupts.
 //!
+//! Lanes cover vectors 32 through 47. Vector 32 is the local APIC timer.
 //! Vector 33 is virtio-blk, 34 is the tablet, and 35 is the keyboard.
 //! The handler only reads that vector's ISR byte and sets a flag.
-//! The syscall prints the line and returns to the driver.
+//! The syscall prints the device line and returns to the driver.
+//!
+//! `SYS_WAIT_IRQ` sleeps only on vector 32 or on an `Irq` capability the
+//! caller holds. A zero argument means that task's first `Irq` capability,
+//! which is how the block driver keeps passing zeros.
 
 use crate::arch::x86_64::cpu;
+use crate::cap;
 use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use meuxe_cap::TaskId;
 
-const BASE: usize = 33;
-const COUNT: usize = 3;
+const BASE: usize = 32;
+const COUNT: usize = 16;
 
 struct Lane {
     fired: AtomicBool,
     isr: AtomicU64,
 }
 
-static LANES: [Lane; COUNT] = [
+static LANES: [Lane; COUNT] = [const {
     Lane {
         fired: AtomicBool::new(false),
         isr: AtomicU64::new(0),
-    },
-    Lane {
-        fired: AtomicBool::new(false),
-        isr: AtomicU64::new(0),
-    },
-    Lane {
-        fired: AtomicBool::new(false),
-        isr: AtomicU64::new(0),
-    },
-];
+    }
+}; COUNT];
+
+pub fn announce() {
+    crate::kprintln!("meuxe: irq lanes={}-{}", BASE, BASE + COUNT - 1);
+}
 
 pub fn arm(vector: u8, isr_virt: u64) {
     let Some(lane) = lane(vector) else {
@@ -51,19 +54,30 @@ pub fn signal(vector: u8) {
     lane.fired.store(true, Ordering::Release);
 }
 
-/// `a0` and `a1` are vectors. Zero means virtio-blk, so the block driver
-/// can keep passing zeros. A flag that is already set is consumed here and
-/// is not cleared on the way in.
-pub fn wait(a0: u64, a1: u64) {
-    let first = normalize(a0);
-    let second = normalize(a1);
+/// `a0` and `a1` are vectors. Zero means the caller's first `Irq` capability.
+/// Vector 32 is the timer and is allowed for every task. A flag that is
+/// already set is consumed here.
+pub fn wait(task: u64, a0: u64, a1: u64) {
+    let first = resolve(task, a0);
+    let second = resolve(task, a1);
+    let Some(first) = first else {
+        if let Some(only) = second {
+            sleep_until(only, only);
+        }
+        return;
+    };
+    let second = second.unwrap_or(first);
+    sleep_until(first, second);
+}
+
+fn sleep_until(first: u8, second: u8) {
     loop {
         if take(first) {
-            announce(first);
+            announce_vector(first);
             return;
         }
         if second != first && take(second) {
-            announce(second);
+            announce_vector(second);
             return;
         }
         cpu::sti();
@@ -72,12 +86,20 @@ pub fn wait(a0: u64, a1: u64) {
     }
 }
 
-fn normalize(vector: u64) -> u8 {
-    if vector == 0 {
-        BASE as u8
-    } else {
-        vector as u8
+fn resolve(task: u64, vector: u64) -> Option<u8> {
+    if vector == 32 {
+        return Some(32);
     }
+    let id = TaskId::new(task as u8)?;
+    cap::with_mut(|caps| {
+        if vector == 0 {
+            caps.first_irq(id).map(|value| value as u8)
+        } else if caps.has_irq(id, vector as u32) {
+            Some(vector as u8)
+        } else {
+            None
+        }
+    })
 }
 
 fn take(vector: u8) -> bool {
@@ -86,7 +108,7 @@ fn take(vector: u8) -> bool {
         .unwrap_or(false)
 }
 
-fn announce(vector: u8) {
+fn announce_vector(vector: u8) {
     match vector {
         33 => crate::kprintln!("meuxe: blk irq"),
         34 => crate::kprintln!("meuxe: tablet irq"),

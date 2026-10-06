@@ -118,11 +118,12 @@ pub fn load() {
 extern "C" fn rust_interrupt(frame: *mut Frame) -> *mut Frame {
     let view = unsafe { &*frame };
     if view.vector == 32 {
+        crate::dev::irq::signal(32);
         let next = sched::preempt(frame);
         super::apic::eoi();
         return next;
     }
-    if view.vector == 33 || view.vector == 34 || view.vector == 35 {
+    if (33..=47).contains(&view.vector) {
         crate::dev::irq::signal(view.vector as u8);
         super::apic::eoi();
         return frame;

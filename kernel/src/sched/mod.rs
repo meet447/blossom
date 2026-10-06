@@ -81,11 +81,8 @@ pub fn init(lapic_id: u32) {
 }
 
 pub fn prepare_ap_idle(cpu_index: usize, lapic_id: u32) -> *mut PerCpu {
-    let id = if cpu_index == 1 {
-        crate::task::AP_IDLE
-    } else {
-        cpu_index as u8
-    };
+    debug_assert!(cpu_index < 8);
+    let id = cpu_index as u8;
     let top = stack_top(id);
     unsafe {
         let task = &mut TASKS[id as usize];

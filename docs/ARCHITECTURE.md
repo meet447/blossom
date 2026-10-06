@@ -36,14 +36,14 @@ An early console draws on the GOP framebuffer. The glyphs live in `meuxe-font` (
 | Path | Role |
 | --- | --- |
 | `init` | Machine bring-up through `boot ready`, then the scheduler proof |
-| `task.rs` | Every task id. The table stops at 16 |
+| `task.rs` | Every task id. The table holds 64. Ids 0–7 are idle slots |
 | `exec` | Load an ET_EXEC ELF into a private address space |
 | `dev` | Virtio PCI windows and MSI-X completion lanes |
 | `service` | Userspace servers. `start` runs storage, then the desktop |
 | `verify` | Framebuffer sampling used by `make verify` |
 | `sched`, `cap`, `ipc`, `mm`, `arch` | Scheduler, capabilities, rings, paging, x86_64 |
 
-Task ids: 0 is the boot thread, 1 is the idle thread of CPU 1, 2 is the calculator, 4 is the capability mint target and is not scheduled, 8 is the steal proof, 9 is the ring-3 stub, 10 is the VFS, 11 is virtio-blk, 12 is the compositor, 13 is the terminal, 14 is input, and 15 is Files. Free on a two-CPU boot: 3, 5, 6, and 7. A seventeenth task does not fit. A third CPU would claim task 2, so this alpha stays at two CPUs.
+Task ids: 0 is the boot thread and 1 is the idle thread of CPU 1. Ids 2 through 7 stay reserved for later CPUs. 8 is the steal proof, 9 is the ring-3 stub, 10 is the VFS, 11 is virtio-blk, 12 is the compositor, 13 is the terminal, 14 is input, 15 is Files, and 16 is the calculator. 17 is reserved for the network server. 18 is the capability mint target and is not scheduled. Ids 24 through 63 are for programs the shell spawns. Alpha still boots two CPUs.
 
 ## Scheduler
 
@@ -63,7 +63,7 @@ The scheduler is a fixed task table with a queue per CPU, round-robin, quantum o
 
 - Unmask I/O APIC lines, or program x2APIC, SMEP, or SMAP.
 - VirtIO-GPU, VirtIO-Net, NVMe, AHCI, PS/2, or a hierarchical filesystem. VirtIO-Net and the filesystem are the alpha in [ALPHA.md](ALPHA.md). VirtIO-GPU, NVMe, AHCI, PS/2, and ext2 stay out of that alpha.
-- A seventeenth task. The table is 16 entries. The alpha plan grows it to 64 and reserves ids 0–7 for idle threads.
+- More than two CPUs. The table holds 64 tasks and reserves ids 0–7 for idle threads.
 
 ## Storage
 
