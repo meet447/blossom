@@ -113,6 +113,7 @@ fn announce_vector(vector: u8) {
         33 => crate::kprintln!("meuxe: blk irq"),
         34 => crate::kprintln!("meuxe: tablet irq"),
         35 => crate::kprintln!("meuxe: kbd irq"),
+        36 => crate::kprintln!("meuxe: net irq"),
         _ => {}
     }
 }

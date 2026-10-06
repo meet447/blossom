@@ -10,6 +10,7 @@
 
 mod desktop;
 pub(crate) mod storage;
+pub(crate) mod net;
 
 use crate::boot::BootInfo;
 
@@ -18,5 +19,7 @@ pub fn start(boot: &BootInfo) -> Result<(), &'static str> {
     crate::kprintln!("meuxe: storage ready");
     desktop::start(boot)?;
     crate::kprintln!("meuxe: desktop ready");
+    net::start()?;
+    crate::kprintln!("meuxe: net ready");
     Ok(())
 }

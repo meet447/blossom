@@ -74,6 +74,10 @@ def main() -> None:
     wait_for(log_path, 60, hello_ready)
     send_keys(stream, qcodes("run /bin/fault"), "run /bin/fault")
     wait_for(log_path, 60, fault_ready)
+    send_keys(stream, qcodes("ping 10.0.2.2"), "ping 10.0.2.2")
+    wait_for(log_path, 60, ping_ready)
+    send_keys(stream, qcodes("fetch 10.0.2.100"), "fetch 10.0.2.100")
+    wait_for(log_path, 60, fetch_ready)
 
 
 def listening(text: str):
@@ -134,6 +138,18 @@ def fault_ready(text: str):
     return None
 
 
+def ping_ready(text: str):
+    if "meuxe: shell ping=10.0.2.2 rx=4/4" in text:
+        return True
+    return None
+
+
+def fetch_ready(text: str):
+    if "meuxe: shell fetch=10.0.2.100 status=200 bytes=11 body=meuxe-alpha" in text:
+        return True
+    return None
+
+
 FS_STEPS = (
     ("mkdir /tmp/d", "meuxe: shell mkdir=/tmp/d ok"),
     ("write /tmp/d/a one", "meuxe: shell write=/tmp/d/a ok"),
@@ -155,6 +171,8 @@ def qcodes(text: str):
         elif ch == "/":
             keys.append("slash")
         elif "a" <= ch <= "z":
+            keys.append(ch)
+        elif ch.isdigit():
             keys.append(ch)
         else:
             raise SystemExit(f"no qcode for {ch!r}")

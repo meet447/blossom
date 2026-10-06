@@ -16,6 +16,7 @@ enum MsixDev {
     Blk,
     Tablet,
     Keyboard,
+    Net,
 }
 
 impl MsixDev {
@@ -24,6 +25,7 @@ impl MsixDev {
             Self::Blk => 33,
             Self::Tablet => 34,
             Self::Keyboard => 35,
+            Self::Net => 36,
         }
     }
 
@@ -32,6 +34,7 @@ impl MsixDev {
             Self::Blk => 0,
             Self::Tablet => 1,
             Self::Keyboard => 2,
+            Self::Net => 3,
         };
         MSI_VIRT + slot * MSI_STRIDE
     }
@@ -41,6 +44,7 @@ impl MsixDev {
             Self::Blk => "virtio-blk",
             Self::Tablet => "virtio-tablet",
             Self::Keyboard => "virtio-keyboard",
+            Self::Net => "virtio-net",
         }
     }
 
@@ -49,6 +53,7 @@ impl MsixDev {
             Self::Blk => "virtio-blk has no msi-x",
             Self::Tablet => "virtio-tablet has no msi-x",
             Self::Keyboard => "virtio-keyboard has no msi-x",
+            Self::Net => "virtio-net has no msi-x",
         }
     }
 
@@ -57,6 +62,7 @@ impl MsixDev {
             Self::Blk => "virtio-blk has no isr",
             Self::Tablet => "virtio-tablet has no isr",
             Self::Keyboard => "virtio-keyboard has no isr",
+            Self::Net => "virtio-net has no isr",
         }
     }
 }
@@ -74,7 +80,11 @@ pub struct VirtioDev {
 }
 
 pub fn find_virtio_blk() -> Result<VirtioDev, &'static str> {
-    find_virtio(&[0x1001, 0x1042], "virtio-blk device is missing")
+    find_virtio(&[0x1001, 0x1042], MsixDev::Blk, "virtio-blk device is missing")
+}
+
+pub fn find_virtio_net() -> Result<VirtioDev, &'static str> {
+    find_virtio(&[0x1000, 0x1041], MsixDev::Net, "virtio-net device is missing")
 }
 
 pub fn find_virtio_tablet() -> Result<VirtioDev, &'static str> {
@@ -124,7 +134,7 @@ fn find_virtio_input(which: usize, missing: &'static str) -> Result<VirtioDev, &
     Err(missing)
 }
 
-fn find_virtio(ids: &[u16], missing: &'static str) -> Result<VirtioDev, &'static str> {
+fn find_virtio(ids: &[u16], msix: MsixDev, missing: &'static str) -> Result<VirtioDev, &'static str> {
     for bus in 0..8u8 {
         for dev in 0..32u8 {
             for func in 0..8u8 {
@@ -139,7 +149,7 @@ fn find_virtio(ids: &[u16], missing: &'static str) -> Result<VirtioDev, &'static
                 let did = (vendor >> 16) as u16;
                 if vid == 0x1AF4 && ids.contains(&did) {
                     let device = parse_virtio(bus, dev, func)?;
-                    enable_msix(bus, dev, func, MsixDev::Blk)?;
+                    enable_msix(bus, dev, func, msix)?;
                     return Ok(device);
                 }
                 if func == 0 {

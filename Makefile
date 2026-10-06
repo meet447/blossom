@@ -25,16 +25,17 @@ CALC_ELF := target/x86_64-unknown-none/release/meuxe-calc
 INPUT_ELF := target/x86_64-unknown-none/release/meuxe-input
 HELLO_ELF := target/x86_64-unknown-none/release/meuxe-hello
 FAULT_ELF := target/x86_64-unknown-none/release/meuxe-fault
+NET_ELF := target/x86_64-unknown-none/release/meuxe-net
 
 test:
-	cargo test --workspace --exclude meuxe-kernel --exclude meuxe-rt --exclude meuxe-vfs --exclude meuxe-blk --exclude meuxe-compositor --exclude meuxe-client --exclude meuxe-files --exclude meuxe-calc --exclude meuxe-input --exclude meuxe-hello --exclude meuxe-fault
+	cargo test --workspace --exclude meuxe-kernel --exclude meuxe-rt --exclude meuxe-vfs --exclude meuxe-blk --exclude meuxe-compositor --exclude meuxe-client --exclude meuxe-files --exclude meuxe-calc --exclude meuxe-input --exclude meuxe-hello --exclude meuxe-fault --exclude meuxe-net
 
 user:
-	RUSTFLAGS="$(USER_RUSTFLAGS)" cargo build -p meuxe-vfs -p meuxe-blk -p meuxe-compositor -p meuxe-client -p meuxe-files -p meuxe-calc -p meuxe-input -p meuxe-hello -p meuxe-fault --release --target x86_64-unknown-none
+	RUSTFLAGS="$(USER_RUSTFLAGS)" cargo build -p meuxe-vfs -p meuxe-blk -p meuxe-compositor -p meuxe-client -p meuxe-files -p meuxe-calc -p meuxe-input -p meuxe-hello -p meuxe-fault -p meuxe-net --release --target x86_64-unknown-none
 
 initramfs: user
 	mkdir -p target
-	cargo run -p meuxe-fs --bin pack -- target/initramfs.bin vfs=$(VFS_ELF) blk=$(BLK_ELF) compositor=$(COMP_ELF) client=$(CLIENT_ELF) files=$(FILES_ELF) calc=$(CALC_ELF) input=$(INPUT_ELF)
+	cargo run -p meuxe-fs --bin pack -- target/initramfs.bin vfs=$(VFS_ELF) blk=$(BLK_ELF) compositor=$(COMP_ELF) client=$(CLIENT_ELF) files=$(FILES_ELF) calc=$(CALC_ELF) input=$(INPUT_ELF) net=$(NET_ELF)
 	cargo run -p meuxe-fs --bin mkfs -- $(DISK) hello=$(HELLO_ELF) fault=$(FAULT_ELF)
 
 kernel: initramfs
@@ -105,6 +106,8 @@ verify: kernel-verify $(LIMINE_DIR)/limine
 		-drive if=pflash,format=raw,file=$(OVMF_VARS) \
 		-drive file=$(DISK),if=none,format=raw,id=blkdisk \
 		-device virtio-blk-pci,drive=blkdisk,disable-legacy=on \
+		-netdev user,id=n0,net=10.0.2.0/24,host=10.0.2.2,guestfwd=tcp:10.0.2.100:80-cmd:python3 scripts/http_stdio.py \
+		-device virtio-net-pci,netdev=n0,disable-legacy=on,mac=52:54:00:12:34:56 \
 		-device virtio-tablet-pci,disable-legacy=on,id=tablet \
 		-device virtio-keyboard-pci,disable-legacy=on \
 		-qmp unix:target/qmp.sock,server=on,wait=off \
@@ -165,7 +168,13 @@ verify: kernel-verify $(LIMINE_DIR)/limine
 	grep -q "meuxe: exit task=24 code=0" target/boot.log; \
 	grep -q "meuxe: shell run=/bin/hello exit=0" target/boot.log; \
 	grep -q "meuxe: fault task=25 vector=14 cr2=0xdead0000 killed" target/boot.log; \
-	grep -q "meuxe: shell run=/bin/fault exit=fault" target/boot.log
+	grep -q "meuxe: shell run=/bin/fault exit=fault" target/boot.log; \
+	grep -q "meuxe: virtio-net msix vector=36" target/boot.log; \
+	grep -q "meuxe: net mac=52:54:00:12:34:56 ip=10.0.2.15 gw=10.0.2.2" target/boot.log; \
+	grep -q "meuxe: shell ping=10.0.2.2 rx=4/4" target/boot.log; \
+	grep -q "meuxe: tcp 10.0.2.100:80 state=established" target/boot.log; \
+	grep -q "meuxe: shell fetch=10.0.2.100 status=200 bytes=11 body=meuxe-alpha" target/boot.log; \
+	grep -q "meuxe: alpha ready" target/boot.log
 
 run: iso
 	cp $(OVMF_VARS_SRC) $(OVMF_VARS)
@@ -181,6 +190,8 @@ run: iso
 		-drive if=pflash,format=raw,file=$(OVMF_VARS) \
 		-drive file=$(DISK),if=none,format=raw,id=blkdisk \
 		-device virtio-blk-pci,drive=blkdisk,disable-legacy=on \
+		-netdev user,id=n0,net=10.0.2.0/24,host=10.0.2.2,guestfwd=tcp:10.0.2.100:80-cmd:python3 scripts/http_stdio.py \
+		-device virtio-net-pci,netdev=n0,disable-legacy=on,mac=52:54:00:12:34:56 \
 		-device virtio-tablet-pci,disable-legacy=on,id=tablet \
 		-device virtio-keyboard-pci,disable-legacy=on
 

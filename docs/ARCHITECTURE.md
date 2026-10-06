@@ -69,11 +69,7 @@ The scheduler is a fixed task table with a queue per CPU, round-robin, quantum o
 
 The scheduler's ring-3 stub still runs in the kernel page tables. After `sched ready`, the kernel loads two static ELF64 executables from an in-memory initramfs. Each gets its own PML4. The upper half is the kernel's page tables, shared. The lower half is private. The scheduler writes CR3 when it switches to a task that has its own PML4.
 
-`meuxe-elf` accepts ELF64, little-endian, x86_64, `ET_EXEC`, and rejects a segment that is both writable and executable. `meuxe-fs` packs the initramfs (`MXFS`) and the on-disk log (`MXLG`, version 1, name/data records). The disk image's first two sectors are that log. Records are `note` (`meuxe-phase3`), `hello`, and `disk`. The log is longer than one sector, and `note` still begins in sector 0.
-
-The block driver is the `meuxe-blk` program. The kernel scans PCI, enables memory space and bus master on virtio-blk, programs MSI-X entry 0 with vector 33, and installs an MMIO capability. It maps the common-config and notify windows uncached into that driver's address space. The driver negotiates virtio 1.0, builds one queue, sets the queue MSI-X vector before enabling the queue, and sleeps in `SYS_WAIT_IRQ` until vector 33. I/O APIC lines stay masked. The two-sector read lands in a page that is also mapped read-only into the VFS. The driver then `SEND`s on a shared endpoint and reports the first four data bytes (`MXLG`).
-
-`meuxe-vfs` has posted `RECV`. It parses the log and reports the `note` record from the share page. Mailbox writes and completions use the direct map, so the rendezvous works across the two page tables.
+The block driver is the `meuxe-blk` program. The kernel scans PCI, enables memory space and bus master on virtio-blk, programs MSI-X entry 0 with vector 33, and installs an MMIO capability. It maps the common-config and notify windows uncached into that driver's address space. The VFS reads and writes **MXDF** on the data disk through ranged block I/O; paths are absolute, and the shell commands in [ALPHA.md](ALPHA.md) go through that RPC.
 
 Storage does not include a compositor, VirtIO-GPU, VirtIO-Net, NVMe, AHCI, PS/2, or Ext2. I/O APIC lines stay masked.
 

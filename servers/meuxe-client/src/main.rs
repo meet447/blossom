@@ -12,7 +12,8 @@ use core::sync::atomic::{fence, Ordering};
 use meuxe_abi::{
     pack_rect, ClientBoot, SubmissionEntry, ERR_AGAIN, ERR_FAULT, RESULT_OK, SYS_REPORT, SYS_RING_PROCESS,
     SYS_SPAWN, TERM_ACCENT, TERM_BG, TERM_COLS, TERM_FG, TERM_ROWS, USER_FS, USER_IMAGE,
-    USER_INFO, WINDOW_COLOR, SQ_OPCODE_RECV, SQ_OPCODE_SEND,
+    USER_INFO, USER_NET, WINDOW_COLOR, NET_OFF_IP, NET_OFF_OP, NET_OFF_PATH, NET_OFF_PATH_LEN,
+    NET_OFF_REPLY, NET_OFF_REPLY_LEN, NET_OFF_STATUS, NET_OP_GET, NET_OP_PING, SQ_OPCODE_RECV, SQ_OPCODE_SEND,
 };
 use meuxe_rt::{ring, syscall, yield_once, RING};
 
@@ -37,7 +38,9 @@ global_asm!(
 const RECT_CAP: u32 = 1;
 const KEY_CAP: u32 = 2;
 const FS_CAP: u32 = 3;
+const NET_CAP: u32 = 4;
 const FS_TAG: u64 = 7;
+const NET_TAG: u64 = 9;
 const KEY_BOX: u64 = RING + 0x808;
 const PROMPT_LEN: u32 = 7;
 const PROMPT: &[u8] = b"meuxe> ";
@@ -164,7 +167,7 @@ fn enter(boot: &ClientBoot, row: &mut u32, col: &mut u32) {
         send_rect(full_rect(boot));
         return;
     }
-    if line == b"fetch" || line == b"neofetch" {
+    if line == b"neofetch" {
         paint_cell(boot, *col, *row, false);
         let dirty_from = *row;
         let scrolled = draw_fetch(boot, row);
@@ -222,7 +225,7 @@ fn enter(boot: &ClientBoot, row: &mut u32, col: &mut u32) {
 
 static mut CWD: [u8; 64] = [b'/'; 64];
 static mut CWD_LEN: usize = 1;
-static mut REPORT: [u8; 32] = [0; 32];
+static mut REPORT: [u8; 64] = [0; 64];
 
 fn cwd() -> &'static [u8] {
     unsafe { &CWD[..CWD_LEN] }
@@ -307,7 +310,7 @@ fn report_cat(path: &[u8], body: &[u8]) {
 }
 
 fn report_line(text: &[u8]) {
-    let n = text.len().min(32);
+    let n = text.len().min(64);
     unsafe {
         REPORT[..n].copy_from_slice(&text[..n]);
         syscall(SYS_REPORT, REPORT.as_ptr() as u64, n as u64);
@@ -470,6 +473,62 @@ fn directory_output<'a>(line: &[u8], owned: &'a mut [u8; 48]) -> Option<&'a [u8]
         }
         report_ok(b"write=", &path[..n]);
         return Some(&owned[..count]);
+    }
+    if let Some(rest) = strip(line, b"ping ") {
+        let ip = parse_ip(trim_ascii_end(rest));
+        let Some(octets) = ip else {
+            return Some(b"?");
+        };
+        let n = net_query(NET_OP_PING, &octets, b"/");
+        if n == 0 {
+            return Some(b"?");
+        }
+        let mut msg = [0u8; 64];
+        msg[..5].copy_from_slice(b"ping=");
+        let mut pos = 5usize;
+        pos += write_ip(&mut msg[pos..], &octets);
+        msg[pos..pos + 4].copy_from_slice(b" rx=");
+        pos += 4;
+        let reply = net_reply();
+        let take = reply.len().min(msg.len() - pos);
+        msg[pos..pos + take].copy_from_slice(&reply[..take]);
+        report_line(&msg[..pos + take]);
+        let reply = net_reply();
+        let rlen = reply.len().min(owned.len());
+        owned[..rlen].copy_from_slice(&reply[..rlen]);
+        return Some(&owned[..rlen]);
+    }
+    if let Some(rest) = strip(line, b"fetch ") {
+        let ip = parse_ip(trim_ascii_end(rest));
+        let Some(octets) = ip else {
+            return Some(b"?");
+        };
+        let n = net_query(NET_OP_GET, &octets, b"/");
+        if n == 0 {
+            return Some(b"?");
+        }
+        let reply = net_reply();
+        let mut msg = [0u8; 64];
+        msg[..6].copy_from_slice(b"fetch=");
+        let mut pos = 6usize;
+        pos += write_ip(&mut msg[pos..], &octets);
+        msg[pos] = b' ';
+        pos += 1;
+        let take = reply.len().min(msg.len() - pos);
+        msg[pos..pos + take].copy_from_slice(&reply[..take]);
+        report_line(&msg[..pos + take]);
+        let body_start = reply.windows(6).position(|w| w == b"body=");
+        let body = if let Some(at) = body_start {
+            &reply[at + 5..]
+        } else {
+            b""
+        };
+        let blen = body.len().min(owned.len());
+        owned[..blen].copy_from_slice(&body[..blen]);
+        return Some(&owned[..blen]);
+    }
+    if line == b"ping" || line == b"fetch" {
+        return Some(b"?");
     }
     if let Some(rest) = strip(line, b"run ") {
         let n = resolve(trim_ascii_end(rest), &mut path);
@@ -649,6 +708,109 @@ fn send_fs() {
     }
 }
 
+fn parse_ip(text: &[u8]) -> Option<[u8; 4]> {
+    let mut parts = [0u8; 4];
+    let mut index = 0usize;
+    let mut value = 0u16;
+    for ch in text {
+        if *ch == b'.' {
+            if index >= 3 || value > 255 {
+                return None;
+            }
+            parts[index] = value as u8;
+            index += 1;
+            value = 0;
+        } else if *ch >= b'0' && *ch <= b'9' {
+            value = value * 10 + (*ch - b'0') as u16;
+        } else {
+            return None;
+        }
+    }
+    if index != 3 || value > 255 {
+        return None;
+    }
+    parts[3] = value as u8;
+    Some(parts)
+}
+
+fn write_ip(dst: &mut [u8], ip: &[u8; 4]) -> usize {
+    let mut pos = 0usize;
+    for (index, octet) in ip.iter().enumerate() {
+        if index > 0 {
+            dst[pos] = b'.';
+            pos += 1;
+        }
+        pos += write_dec(&mut dst[pos..], *octet as u32);
+    }
+    pos
+}
+
+fn net_reply() -> &'static [u8] {
+    static mut BUF: [u8; 128] = [0; 128];
+    unsafe {
+        let len = ((USER_NET + NET_OFF_REPLY_LEN) as *const u32).read_volatile() as usize;
+        let len = len.min(128);
+        let src = (USER_NET + NET_OFF_REPLY) as *const u8;
+        for index in 0..len {
+            BUF[index] = src.add(index).read_volatile();
+        }
+        core::slice::from_raw_parts(BUF.as_ptr(), len)
+    }
+}
+
+fn net_query(op: u32, ip: &[u8; 4], path: &[u8]) -> u32 {
+    let path_len = path.len().min(64);
+    unsafe {
+        (USER_NET as *mut u32).write_volatile(op);
+        for index in 0..4usize {
+            ((USER_NET + NET_OFF_IP + index as u64) as *mut u8).write_volatile(ip[index]);
+        }
+        ((USER_NET + NET_OFF_PATH_LEN) as *mut u32).write_volatile(path_len as u32);
+        for index in 0..path_len {
+            ((USER_NET + NET_OFF_PATH + index as u64) as *mut u8)
+                .write_volatile(path[index]);
+        }
+        ((USER_NET + NET_OFF_STATUS) as *mut u32).write_volatile(0);
+        ((USER_NET + NET_OFF_REPLY_LEN) as *mut u32).write_volatile(0);
+    }
+    fence(Ordering::SeqCst);
+    send_net();
+    for _ in 0..600_000 {
+        let status = unsafe { ((USER_NET + NET_OFF_STATUS) as *const u32).read_volatile() };
+        if status != 0 {
+            return status;
+        }
+        yield_once();
+    }
+    0
+}
+
+fn send_net() {
+    loop {
+        let send = SubmissionEntry {
+            opcode: SQ_OPCODE_SEND,
+            flags: 0,
+            cap: NET_CAP,
+            a: NET_TAG,
+            b: 0,
+            user_data: NET_TAG,
+        };
+        if ring().sq.push(send).is_err() {
+            yield_once();
+            continue;
+        }
+        syscall(SYS_RING_PROCESS, 0, 0);
+        loop {
+            match completion(NET_TAG) {
+                Some(RESULT_OK) => return,
+                Some(ERR_AGAIN) => break,
+                Some(_) => break,
+                None => yield_once(),
+            }
+        }
+    }
+}
+
 const MARK: [&[u8]; 8] = [
     b"      #      ",
     b"   #  #  #   ",
@@ -790,7 +952,7 @@ fn write_dec(dst: &mut [u8], value: u32) -> usize {
 
 fn command_output(line: &[u8]) -> Option<&[u8]> {
     if line == b"help" {
-        Some(b"echo clear ls cat write fetch help")
+        Some(b"pwd cd ls cat write append mkdir rm mv cp stat df ping fetch run")
     } else if line.len() >= 5 && &line[..5] == b"echo " {
         Some(&line[5..])
     } else if line == b"echo" || line.is_empty() {

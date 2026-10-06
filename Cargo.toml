@@ -20,6 +20,7 @@ members = [
     "servers/meuxe-input",
     "servers/meuxe-hello",
     "servers/meuxe-fault",
+    "servers/meuxe-net",
     "kernel",
 ]
 

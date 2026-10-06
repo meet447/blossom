@@ -170,6 +170,15 @@ pub fn note_report(task: u64, ptr: u64, len: u64) {
             crate::kprintln!("meuxe: shell {text}");
         }
     }
+    if task == task::NET as u64 {
+        if let Ok(text) = core::str::from_utf8(&bytes[..len as usize]) {
+            if text.starts_with("mac=") {
+                crate::kprintln!("meuxe: net {text}");
+            } else {
+                crate::kprintln!("meuxe: {text}");
+            }
+        }
+    }
     if task == task::BLK as u64 && &bytes[..len as usize] == b"RNG!" {
         crate::kprintln!("meuxe: blk range lba=8 sectors=64 ok");
     }
@@ -249,8 +258,8 @@ fn map_window(cr3: u64, virt_base: u64, phys: u64, len: u32) -> Result<u64, &'st
     Ok(virt_base + offset)
 }
 
-fn copy_user(ptr: u64, len: u64) -> Option<[u8; 32]> {
-    if len == 0 || len > 32 {
+fn copy_user(ptr: u64, len: u64) -> Option<[u8; 64]> {
+    if len == 0 || len > 64 {
         return None;
     }
     let len = len as usize;
@@ -261,7 +270,7 @@ fn copy_user(ptr: u64, len: u64) -> Option<[u8; 32]> {
     if flags & 4 == 0 || last_flags & 4 == 0 {
         return None;
     }
-    let mut buf = [0u8; 32];
+    let mut buf = [0u8; 64];
     for (index, slot) in buf.iter_mut().take(len).enumerate() {
         *slot = unsafe { ((ptr + index as u64) as *const u8).read_volatile() };
     }

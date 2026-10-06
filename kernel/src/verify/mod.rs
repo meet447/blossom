@@ -20,6 +20,7 @@ static LOGGED: AtomicBool = AtomicBool::new(false);
 const LISTING: &[u8] = b"bin etc home tmp";
 const NOTE: &[u8] = b"meuxe-phase3";
 const STORED: &[u8] = b"there";
+const ALPHA_BODY: &[u8] = b"meuxe-alpha";
 
 pub fn finish(boot: &BootInfo) -> Result<(), &'static str> {
     wait_echo(boot)?;
@@ -31,6 +32,8 @@ pub fn finish(boot: &BootInfo) -> Result<(), &'static str> {
     wait_free(boot)?;
     wait_run_ok(boot)?;
     wait_run_fault(boot)?;
+    wait_alpha(boot)?;
+    crate::kprintln!("meuxe: alpha ready");
     Ok(())
 }
 
@@ -137,6 +140,17 @@ pub fn wait_run_fault(boot: &BootInfo) -> Result<(), &'static str> {
         cpu::hlt();
     }
     Err("terminal did not print exit=fault")
+}
+
+pub fn wait_alpha(boot: &BootInfo) -> Result<(), &'static str> {
+    let start = sched::ticks();
+    while sched::ticks().wrapping_sub(start) <= 60000 {
+        if shows(boot, ALPHA_BODY) {
+            return Ok(());
+        }
+        cpu::hlt();
+    }
+    Err("terminal did not show fetch body")
 }
 
 pub fn wait_free(boot: &BootInfo) -> Result<(), &'static str> {

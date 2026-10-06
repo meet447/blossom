@@ -161,7 +161,23 @@ pub const USER_FILES: u64 = 0x12000000;
 pub const USER_CALC: u64 = 0x13000000;
 /// Pointer clicks inside the calculator. Separate from the file manager's pick page.
 pub const USER_CALC_PICK: u64 = 0xF07000;
+/// 64 KiB DMA window for the virtio-net driver (below `USER_FRONT`).
+pub const USER_NET_DMA: u64 = 0xE50000;
+/// Terminal ↔ net server RPC page.
+pub const USER_NET: u64 = 0xF08000;
 pub const USER_KBD_INFO: u64 = USER_INFO + 256;
+
+pub const NET_OP_INFO: u32 = 0;
+pub const NET_OP_PING: u32 = 1;
+pub const NET_OP_GET: u32 = 2;
+
+pub const NET_OFF_OP: u64 = 0;
+pub const NET_OFF_IP: u64 = 4;
+pub const NET_OFF_PATH: u64 = 8;
+pub const NET_OFF_PATH_LEN: u64 = 72;
+pub const NET_OFF_STATUS: u64 = 76;
+pub const NET_OFF_REPLY_LEN: u64 = 80;
+pub const NET_OFF_REPLY: u64 = 84;
 
 pub const WINDOW_X: u32 = 120;
 pub const WINDOW_Y: u32 = 120;
@@ -244,6 +260,24 @@ pub struct BlkBoot {
 }
 
 const _: () = assert!(core::mem::size_of::<BlkBoot>() == 128);
+
+/// Virtio-net windows and DMA layout for the network server.
+#[repr(C)]
+pub struct NetBoot {
+    pub common: u64,
+    pub notify: u64,
+    pub device: u64,
+    pub notify_mul: u32,
+    pub queue_size: u32,
+    pub dma_phys: [u64; 16],
+    pub dma_virt: u64,
+    pub share_phys: u64,
+    pub share_virt: u64,
+    pub tick_phys: u64,
+    pub tick_virt: u64,
+}
+
+const _: () = assert!(core::mem::size_of::<NetBoot>() == 200);
 
 /// Framebuffer and the two client buffers, in the compositor's address space.
 #[repr(C)]

@@ -167,6 +167,13 @@ pub fn preempt(frame: *mut Frame) -> *mut Frame {
         (*cpu).ticks = (*cpu).ticks.wrapping_add(1);
         if (*cpu).cpu_index == 0 {
             TICKS.fetch_add(1, Ordering::Relaxed);
+            let page = crate::service::net::tick_page();
+            if page != 0 {
+                let ticks = TICKS.load(Ordering::Relaxed);
+                unsafe {
+                    ((crate::mm::hhdm() + page) as *mut u64).write_volatile(ticks);
+                }
+            }
         }
         if READY.load(Ordering::Acquire) == 0 {
             return frame;
