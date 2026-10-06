@@ -122,6 +122,8 @@ fn overlaps_reserved(virt: u64, len: u64) -> bool {
         meuxe_abi::USER_FS_FILES,
         meuxe_abi::USER_PICK,
         meuxe_abi::USER_CALC_PICK,
+        meuxe_abi::USER_NET,
+        meuxe_abi::USER_NET_DMA,
         meuxe_abi::USER_CHILD,
         meuxe_abi::USER_IMAGE,
     ];

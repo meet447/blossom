@@ -19,7 +19,5 @@ pub fn start(boot: &BootInfo) -> Result<(), &'static str> {
     crate::kprintln!("meuxe: storage ready");
     desktop::start(boot)?;
     crate::kprintln!("meuxe: desktop ready");
-    net::start()?;
-    crate::kprintln!("meuxe: net ready");
     Ok(())
 }

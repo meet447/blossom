@@ -4,6 +4,8 @@
 #![no_main]
 
 use core::arch::global_asm;
+use core::mem::MaybeUninit;
+use core::ptr::addr_of_mut;
 use core::sync::atomic::{fence, Ordering};
 use meuxe_abi::{
     NetBoot, SubmissionEntry, SYS_REPORT, SYS_RING_PROCESS, SYS_WAIT_IRQ,
@@ -25,9 +27,12 @@ global_asm!(
 const ENDPOINT: u32 = 1;
 const NET_VECTOR: u64 = 36;
 const TIMER_VECTOR: u64 = 32;
+const RPC_BOX: u64 = RING + 0x808;
 const RPC_TAG: u64 = 8;
 static mut RPC_PHASE: u8 = 0;
 static mut OUT: [u8; 1600] = [0; 1600];
+static mut STACK_STORE: MaybeUninit<Stack> = MaybeUninit::uninit();
+static mut REPORT_MSG: [u8; 64] = [0; 64];
 const ACKNOWLEDGE: u8 = 1;
 const DRIVER: u8 = 2;
 const DRIVER_OK: u8 = 4;
@@ -66,7 +71,7 @@ extern "C" fn main() -> ! {
         rx_last: 0,
         tx_last: 0,
     };
-    let mut stack = if let Some(mac) = prepare(boot, &mut dev) {
+    let stack = if let Some(mac) = prepare(boot, &mut dev) {
         let config = Config {
             mac: Mac(mac),
             ip: Ipv4([10, 0, 2, 15]),
@@ -74,80 +79,97 @@ extern "C" fn main() -> ! {
             gateway: Ipv4([10, 0, 2, 2]),
         };
         report_mac(&mac);
-        Stack::new(config)
+        unsafe {
+            let slot = &mut *addr_of_mut!(STACK_STORE);
+            slot.write(Stack::new(config));
+            slot.assume_init_mut()
+        }
     } else {
         loop {
             yield_once();
         }
     };
 
+    serve(boot, &mut dev, stack);
+}
+
+fn serve(boot: &NetBoot, dev: &mut Dev, stack: &mut Stack) -> ! {
     let mut posted = false;
+    let mut rpc_ready = false;
     let mut pending_rpc = false;
     let mut rpc_op = 0u32;
     let mut tcp_logged = false;
     loop {
         let out = unsafe { &mut *core::ptr::addr_of_mut!(OUT) };
         syscall(SYS_RING_PROCESS, 0, 0);
-        while let Some(entry) = ring().cq.pop() {
-            if entry.user_data == RPC_TAG && entry.result == 0 {
-                pending_rpc = true;
-                rpc_op = read32(boot.share_virt, NET_OFF_OP);
-                tcp_logged = false;
-                write32(boot.share_virt, NET_OFF_STATUS, 0);
-                unsafe {
-                    RPC_PHASE = 0;
-                }
-            }
-        }
+        rpc_ready |= take_rpc();
         if !posted {
-            let recv = SubmissionEntry {
-                opcode: SQ_OPCODE_RECV,
-                flags: 0,
-                cap: ENDPOINT,
-                a: RING + 0x808,
-                b: 0,
-                user_data: RPC_TAG,
-            };
-            posted = ring().sq.push(recv).is_ok();
+            posted = post_rpc_recv();
             if posted {
                 syscall(SYS_RING_PROCESS, 0, 0);
+                rpc_ready |= take_rpc();
             }
         }
-        let mailbox = unsafe { ((RING + 0x808) as *const u64).read_volatile() };
-        if mailbox != 0 {
+        let mailbox = unsafe { (RPC_BOX as *const u64).read_volatile() };
+        if rpc_ready && mailbox != 0 {
             unsafe {
-                ((RING + 0x808) as *mut u64).write_volatile(0);
+                (RPC_BOX as *mut u64).write_volatile(0);
             }
             posted = false;
+            rpc_ready = false;
+            pending_rpc = true;
+            rpc_op = read32(boot.share_virt, NET_OFF_OP);
+            tcp_logged = false;
+            write32(boot.share_virt, NET_OFF_STATUS, 0);
+            unsafe {
+                RPC_PHASE = 0;
+            }
         }
 
-        drain_rx(&mut dev, &mut stack, out);
-        drain_tx(&mut dev);
+        drain_rx(dev, stack, out);
+        drain_tx(dev);
 
         if pending_rpc {
-            if drive_rpc(
-                boot,
-                &mut dev,
-                &mut stack,
-                out,
-                rpc_op,
-                &mut tcp_logged,
-            ) {
+            if drive_rpc(boot, dev, stack, out, rpc_op, &mut tcp_logged) {
                 pending_rpc = false;
                 reply_rpc();
             }
         }
 
-        if let Some(n) = stack_tick(boot, &mut stack, out) {
-            transmit(&mut dev, &out[..n]);
+        if let Some(n) = stack_tick(boot, stack, out) {
+            transmit(dev, &out[..n]);
         }
 
-        if pending_rpc || work_pending(&mut dev, &stack) {
+        if pending_rpc || work_pending(dev, stack) {
+            yield_once();
+        } else if posted {
             yield_once();
         } else {
             syscall(SYS_WAIT_IRQ, NET_VECTOR, TIMER_VECTOR);
         }
     }
+}
+
+fn post_rpc_recv() -> bool {
+    let recv = SubmissionEntry {
+        opcode: SQ_OPCODE_RECV,
+        flags: 0,
+        cap: ENDPOINT,
+        a: RPC_BOX,
+        b: 0,
+        user_data: RPC_TAG,
+    };
+    ring().sq.push(recv).is_ok()
+}
+
+fn take_rpc() -> bool {
+    let mut ready = false;
+    while let Some(entry) = ring().cq.pop() {
+        if entry.user_data == RPC_TAG && entry.result == 0 {
+            ready = true;
+        }
+    }
+    ready
 }
 
 fn work_pending(dev: &Dev, stack: &Stack) -> bool {
@@ -272,7 +294,7 @@ fn stack_tick(boot: &NetBoot, stack: &mut Stack, out: &mut [u8]) -> Option<usize
 }
 
 fn report_mac(mac: &[u8; 6]) {
-    let mut msg = [0u8; 64];
+    let msg = unsafe { &mut *addr_of_mut!(REPORT_MSG) };
     let mut pos = 0usize;
     msg[pos..pos + 4].copy_from_slice(b"mac=");
     pos += 4;
