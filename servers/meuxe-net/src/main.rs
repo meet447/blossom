@@ -526,13 +526,16 @@ fn poll_stack(boot: &NetBoot, dev: &mut Dev, stack: &mut Stack, out: &mut [u8]) 
 
 fn report_tcp(ip: &[u8; 4]) {
     let mut msg = [0u8; 48];
-    msg[..4].copy_from_slice(b"tcp ");
-    let mut pos = 4usize;
+    const PREFIX: &[u8] = b"tcp ";
+    const PORT: &[u8] = b":80 ";
+    const STATE: &[u8] = b"state=established";
+    msg[..PREFIX.len()].copy_from_slice(PREFIX);
+    let mut pos = PREFIX.len();
     pos += write_ip(&mut msg[pos..], ip);
-    msg[pos..pos + 4].copy_from_slice(b":80 ");
-    pos += 4;
-    msg[pos..pos + 16].copy_from_slice(b"state=established");
-    pos += 16;
+    msg[pos..pos + PORT.len()].copy_from_slice(PORT);
+    pos += PORT.len();
+    msg[pos..pos + STATE.len()].copy_from_slice(STATE);
+    pos += STATE.len();
     syscall(SYS_REPORT, msg.as_ptr() as u64, pos as u64);
 }
 
@@ -567,9 +570,7 @@ fn write_dec(dst: &mut [u8], mut value: u32) -> usize {
 }
 
 fn finish_info(boot: &NetBoot) -> bool {
-    let mut reply = [0u8; 64];
-    reply[..18].copy_from_slice(b"10.0.2.15 gw 10.0.2.2");
-    write_reply(boot, &reply[..18]);
+    write_reply(boot, b"10.0.2.15 gw 10.0.2.2");
     true
 }
 

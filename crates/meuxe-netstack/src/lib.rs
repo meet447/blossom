@@ -537,6 +537,7 @@ impl Stack {
             return None;
         }
         let seq = be32(&payload[4..8]);
+        let ack_num = be32(&payload[8..12]);
         let flags = payload[13];
         let fin = (flags & 0x01) != 0;
         let syn = (flags & 0x02) != 0;
@@ -546,6 +547,9 @@ impl Stack {
             return None;
         }
         let data = &payload[hdr_len..];
+        if ack_flag && ack_num == self.tcp_seq {
+            self.tcp_unacked = false;
+        }
 
         if self.tcp_state == TcpState::SynSent && syn && ack_flag {
             self.tcp_unacked = false;

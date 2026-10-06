@@ -341,6 +341,88 @@ fn http_get_flow() {
 }
 
 #[test]
+fn http_get_split_like_slirp() {
+    let mut stack = Stack::new(test_config());
+    let mut out = [0u8; 1514];
+    stack
+        .http_get(Ipv4([10, 0, 2, 100]), 80, b"/", &mut out)
+        .unwrap();
+    let arp_reply = build_arp_reply(
+        [10, 0, 2, 2],
+        peer_mac().0,
+        [10, 0, 2, 15],
+        test_config().mac.0,
+    );
+    if stack.recv(&arp_reply, &mut out).is_none() {
+        stack.after_arp(&mut out).expect("syn after arp");
+    }
+    let syn_ack = build_tcp_segment(
+        test_config().mac.0,
+        peer_mac().0,
+        [10, 0, 2, 100],
+        [10, 0, 2, 15],
+        80,
+        49152,
+        1,
+        0x1001,
+        0x12,
+        &[],
+    );
+    let n = stack.recv(&syn_ack, &mut out).expect("http request");
+    assert!(out[HDR + 20..n].windows(14).any(|w| w == b"GET / HTTP/1.0"));
+    let pure_ack = build_tcp_segment(
+        test_config().mac.0,
+        peer_mac().0,
+        [10, 0, 2, 100],
+        [10, 0, 2, 15],
+        80,
+        49152,
+        2,
+        0x1033,
+        0x10,
+        &[],
+    );
+    assert!(stack.recv(&pure_ack, &mut out).is_none());
+    let payload = b"HTTP/1.0 200 OK\r\nContent-Length: 11\r\n\r\nmeuxe-alpha";
+    let data = build_tcp_segment(
+        test_config().mac.0,
+        peer_mac().0,
+        [10, 0, 2, 100],
+        [10, 0, 2, 15],
+        80,
+        49152,
+        2,
+        0x1033,
+        0x18,
+        payload,
+    );
+    let ack_n = stack.recv(&data, &mut out).expect("ack data");
+    assert_eq!(out[HDR + 33], 0x10, "expected a pure ACK of the response");
+    assert!(ack_n > HDR);
+    let fin = build_tcp_segment(
+        test_config().mac.0,
+        peer_mac().0,
+        [10, 0, 2, 100],
+        [10, 0, 2, 15],
+        80,
+        49152,
+        2 + payload.len() as u32,
+        0x1033,
+        0x11,
+        &[],
+    );
+    stack.recv(&fin, &mut out).expect("fin ack");
+    assert_eq!(stack.body(), b"meuxe-alpha");
+    match stack.http_status() {
+        HttpStatus::Active { status_code, state } => {
+            assert_eq!(status_code, 200);
+            assert_eq!(state, TcpState::TimeWait);
+        }
+        other => panic!("expected active http, got {other:?}"),
+    }
+}
+
+#[test]
 fn arp_gateway_for_remote() {
     let mut stack = Stack::new(test_config());
     let mut out = [0u8; 1514];
