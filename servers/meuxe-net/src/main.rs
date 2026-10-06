@@ -73,12 +73,12 @@ extern "C" fn main() -> ! {
         rx_last: 0,
         tx_last: 0,
     };
-    report_mac(&MAC);
     if prepare(boot, &mut dev).is_none() {
         loop {
             yield_once();
         }
     }
+    report_mac(&MAC);
     let config = Config {
         mac: Mac(MAC),
         ip: Ipv4([10, 0, 2, 15]),
@@ -100,9 +100,18 @@ fn serve(boot: &NetBoot, dev: &mut Dev, stack: &mut Stack) -> ! {
     let mut tcp_logged = false;
     loop {
         let out = unsafe { &mut *core::ptr::addr_of_mut!(OUT) };
-        syscall(SYS_RING_PROCESS, 0, 0);
+        let mut rpc_done = false;
         while let Some(entry) = ring().cq.pop() {
             if entry.user_data == RPC_TAG && entry.result == 0 {
+                rpc_done = true;
+            }
+        }
+        if rpc_done {
+            posted = false;
+            if unsafe { (RPC_BOX as *const u64).read_volatile() } != 0 {
+                unsafe {
+                    (RPC_BOX as *mut u64).write_volatile(0);
+                }
                 pending_rpc = true;
                 rpc_op = read32(boot.share_virt, NET_OFF_OP);
                 tcp_logged = false;
@@ -114,17 +123,8 @@ fn serve(boot: &NetBoot, dev: &mut Dev, stack: &mut Stack) -> ! {
         }
         if !posted {
             posted = post_rpc_recv();
-            if posted {
-                syscall(SYS_RING_PROCESS, 0, 0);
-            }
         }
-        let mailbox = unsafe { (RPC_BOX as *const u64).read_volatile() };
-        if mailbox != 0 {
-            unsafe {
-                (RPC_BOX as *mut u64).write_volatile(0);
-            }
-            posted = false;
-        }
+        syscall(SYS_RING_PROCESS, 0, 0);
 
         drain_rx(dev, stack, out);
         drain_tx(dev);
@@ -383,10 +383,15 @@ fn setup_queue(dev: &Dev, index: u16, rx: bool) -> bool {
         return false;
     }
     write16(common, 0x1c, 1);
-    let base_page = if rx { 2u64 } else { 4u64 };
+    let base_page = if rx {
+        2u64
+    } else {
+        2u64 + dev.queue_size as u64
+    };
     for slot in 0..dev.queue_size as u64 {
-        let buf_virt = dev.dma_virt + (base_page + slot) * 4096;
-        let buf_phys = dev.dma_phys[(base_page + slot) as usize];
+        let page = base_page + slot;
+        let buf_virt = dev.dma_virt + page * 4096;
+        let buf_phys = dev.dma_phys[page as usize];
         let flags = if rx { DESC_WRITE } else { 0 };
         write_desc(q, slot, buf_phys, 4096, flags, 0);
         if rx {
@@ -461,7 +466,8 @@ fn transmit(dev: &Dev, frame: &[u8]) {
     let avail = dev.tx_queue + AVAIL;
     let head = read16(avail, 2);
     let id = (head % dev.queue_size) as u64;
-    let buf = dev.dma_virt + (4 + id) * 4096;
+    let page = 2u64 + dev.queue_size as u64 + id;
+    let buf = dev.dma_virt + page * 4096;
     unsafe {
         for index in 0..NET_HDR {
             ((buf + index as u64) as *mut u8).write_volatile(0);
@@ -473,7 +479,7 @@ fn transmit(dev: &Dev, frame: &[u8]) {
     write_desc(
         dev.tx_queue,
         id,
-        dev.dma_phys[(4 + id) as usize],
+        dev.dma_phys[page as usize],
         (NET_HDR + frame.len()) as u32,
         0,
         0,
