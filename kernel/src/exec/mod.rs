@@ -31,8 +31,7 @@ pub fn load(image: &[u8]) -> Result<LoadedElf, &'static str> {
         };
         map_segment(cr3, image, segment.virt, segment.offset, segment.filesz, segment.memsz, perm)?;
     }
-    let stack = mm::alloc_frame_zeroed()?;
-    mm::map_user_in(cr3, USER_STACK, stack, UserPerm::Rw)?;
+    map_user_stack(cr3)?;
     let ring_phys = mm::alloc_frame_zeroed()?;
     unsafe {
         ((mm::hhdm() + ring_phys) as *mut RingPage).write(RingPage::new());
@@ -88,10 +87,26 @@ fn map_segment(
     Ok(())
 }
 
+const STACK_PAGES: u64 = 8;
+
+fn map_user_stack(cr3: u64) -> Result<(), &'static str> {
+    let low = USER_STACK - (STACK_PAGES - 1) * 0x1000;
+    let mut page = low;
+    while page < USER_STACK + 0x1000 {
+        let frame = mm::alloc_frame_zeroed()?;
+        mm::map_user_in(cr3, page, frame, UserPerm::Rw)?;
+        page += 0x1000;
+    }
+    Ok(())
+}
+
 fn overlaps_reserved(virt: u64, len: u64) -> bool {
     let end = virt.saturating_add(len);
+    let stack_lo = USER_STACK - (STACK_PAGES - 1) * 0x1000;
+    if virt < USER_STACK + 0x1000 && stack_lo < end {
+        return true;
+    }
     let reserved = [
-        USER_STACK,
         USER_RING,
         meuxe_abi::USER_INFO,
         meuxe_abi::USER_MMIO,
