@@ -2,7 +2,7 @@
 
 Meuxe is a capability-based microkernel for x86_64. The target shape is closer to seL4, Fuchsia, or Redox than to a monolithic Unix: the kernel keeps address spaces, scheduling, and object capabilities; drivers and the compositor run in isolated userspace and talk through shared rings.
 
-This document is the plan. Boot, the scheduler, storage, the desktop, and the shell are in the tree.
+This document describes what is in the tree: boot, the scheduler, storage, the desktop, and the shell. The first alpha, which adds a hierarchical disk, the filesystem command set, program spawn, and a network, is [ALPHA.md](ALPHA.md).
 
 ## Invariants
 
@@ -62,8 +62,8 @@ The scheduler is a fixed task table with a queue per CPU, round-robin, quantum o
 ## Not in this kernel yet
 
 - Unmask I/O APIC lines, or program x2APIC, SMEP, or SMAP.
-- VirtIO-GPU, VirtIO-Net, NVMe, AHCI, PS/2, or Ext2.
-- A seventeenth task. The table is 16 entries.
+- VirtIO-GPU, VirtIO-Net, NVMe, AHCI, PS/2, or a hierarchical filesystem. VirtIO-Net and the filesystem are the alpha in [ALPHA.md](ALPHA.md). VirtIO-GPU, NVMe, AHCI, PS/2, and ext2 stay out of that alpha.
+- A seventeenth task. The table is 16 entries. The alpha plan grows it to 64 and reserves ids 0–7 for idle threads.
 
 ## Storage
 
