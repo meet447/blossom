@@ -6,6 +6,8 @@
 use super::cpu;
 use crate::log;
 use crate::sched;
+use crate::task::{DYN_FIRST, DYN_LAST};
+use super::percpu;
 use core::arch::{asm, global_asm};
 use core::mem::size_of;
 
@@ -118,11 +120,12 @@ pub fn load() {
 extern "C" fn rust_interrupt(frame: *mut Frame) -> *mut Frame {
     let view = unsafe { &*frame };
     if view.vector == 32 {
+        crate::dev::irq::signal(32);
         let next = sched::preempt(frame);
         super::apic::eoi();
         return next;
     }
-    if view.vector == 33 || view.vector == 34 || view.vector == 35 {
+    if (33..=47).contains(&view.vector) {
         crate::dev::irq::signal(view.vector as u8);
         super::apic::eoi();
         return frame;
@@ -135,6 +138,11 @@ extern "C" fn rust_interrupt(frame: *mut Frame) -> *mut Frame {
     } else {
         0
     };
+    let current = unsafe { (*percpu::this()).current_task as u8 };
+    if current >= DYN_FIRST && current <= DYN_LAST {
+        crate::proc::kill_fault(current, view.vector, cr2);
+        return sched::preempt(frame);
+    }
     log::fault(view.vector, view.error, view.rip, cr2);
     if cfg!(feature = "verify") {
         cpu::debug_exit(0x03);

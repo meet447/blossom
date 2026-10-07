@@ -10,7 +10,7 @@ fn main() -> ExitCode {
         eprintln!("usage: packlog OUT");
         return ExitCode::from(1);
     };
-    let mut disk = vec![0u8; 64 * 1024];
+    let mut disk = vec![0u8; 64 * 1024 * 1024];
     let pad = vec![b'.'; 500];
     let records: [(&[u8], &[u8]); 3] = [
         (b"note", b"meuxe-phase3"),

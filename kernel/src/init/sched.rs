@@ -8,6 +8,13 @@ use crate::task;
 use core::sync::atomic::Ordering;
 
 pub fn bringup(boot: &BootInfo) -> Result<(), &'static str> {
+    crate::kprintln!(
+        "meuxe: tasks max={} idle=0-{} dyn={}-{}",
+        task::MAX,
+        task::IDLE_LAST,
+        task::DYN_FIRST,
+        task::DYN_LAST
+    );
     let ring = crate::user::setup()?;
     crate::cap::init(ring)?;
     crate::kprintln!(

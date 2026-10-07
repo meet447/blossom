@@ -10,6 +10,7 @@
 
 mod desktop;
 pub(crate) mod storage;
+pub(crate) mod net;
 
 use crate::boot::BootInfo;
 

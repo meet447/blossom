@@ -80,6 +80,7 @@ pub const SQ_OPCODE_NOP: u16 = 0;
 pub const SQ_OPCODE_SEND: u16 = 1;
 pub const SQ_OPCODE_RECV: u16 = 2;
 pub const SQ_OPCODE_MAP: u16 = 3;
+pub const SQ_OPCODE_WAIT: u16 = 4;
 
 /// One submission-queue entry. Userspace writes these; the kernel consumes them.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -126,6 +127,16 @@ pub const SYS_YIELD: u64 = 2;
 pub const SYS_REPORT: u64 = 3;
 /// Sleep until the virtio-blk completion interrupt arrives.
 pub const SYS_WAIT_IRQ: u64 = 4;
+/// Load an ELF image from the caller's address space and run it.
+pub const SYS_SPAWN: u64 = 5;
+/// Terminate the current spawned task.
+pub const SYS_EXIT: u64 = 6;
+
+pub const USER_CHILD: u64 = 0xE40000;
+/// Child view of the share frame the parent reads at `USER_CHILD`.
+pub const USER_CHILD_SHARE: u64 = USER_SHARE;
+pub const USER_IMAGE: u64 = 0x14000000;
+pub const USER_IMAGE_BYTES: u64 = 256 * 1024;
 
 pub const USER_INFO: u64 = 0xB00000;
 pub const USER_MMIO: u64 = 0xC00000;
@@ -150,7 +161,23 @@ pub const USER_FILES: u64 = 0x12000000;
 pub const USER_CALC: u64 = 0x13000000;
 /// Pointer clicks inside the calculator. Separate from the file manager's pick page.
 pub const USER_CALC_PICK: u64 = 0xF07000;
+/// 64 KiB DMA window for the virtio-net driver (below `USER_FRONT`).
+pub const USER_NET_DMA: u64 = 0xE50000;
+/// Terminal ↔ net server RPC page.
+pub const USER_NET: u64 = 0xF08000;
 pub const USER_KBD_INFO: u64 = USER_INFO + 256;
+
+pub const NET_OP_INFO: u32 = 0;
+pub const NET_OP_PING: u32 = 1;
+pub const NET_OP_GET: u32 = 2;
+
+pub const NET_OFF_OP: u64 = 0;
+pub const NET_OFF_IP: u64 = 4;
+pub const NET_OFF_PATH: u64 = 8;
+pub const NET_OFF_PATH_LEN: u64 = 72;
+pub const NET_OFF_STATUS: u64 = 76;
+pub const NET_OFF_REPLY_LEN: u64 = 80;
+pub const NET_OFF_REPLY: u64 = 84;
 
 pub const WINDOW_X: u32 = 120;
 pub const WINDOW_Y: u32 = 120;
@@ -228,9 +255,30 @@ pub struct BlkBoot {
     pub share_phys: u64,
     pub queue_virt: u64,
     pub share_virt: u64,
+    /// Physical addresses of the eight data pages at `share_virt + 4096`.
+    pub data_phys: [u64; 8],
 }
 
-const _: () = assert!(core::mem::size_of::<BlkBoot>() == 64);
+const _: () = assert!(core::mem::size_of::<BlkBoot>() == 128);
+
+/// Virtio-net windows and DMA layout for the network server.
+#[repr(C)]
+pub struct NetBoot {
+    pub common: u64,
+    pub notify: u64,
+    pub device: u64,
+    pub notify_mul: u32,
+    pub queue_size: u32,
+    pub dma_phys: [u64; 16],
+    pub dma_virt: u64,
+    pub share_phys: u64,
+    pub share_virt: u64,
+    pub tick_phys: u64,
+    pub tick_virt: u64,
+    pub isr: u64,
+}
+
+const _: () = assert!(core::mem::size_of::<NetBoot>() == 208);
 
 /// Framebuffer and the two client buffers, in the compositor's address space.
 #[repr(C)]

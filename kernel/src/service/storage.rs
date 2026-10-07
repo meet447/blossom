@@ -20,6 +20,7 @@ const INITRAMFS: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/initramfs.bin
 static BLK_OK: AtomicBool = AtomicBool::new(false);
 static VFS_OK: AtomicBool = AtomicBool::new(false);
 static DIRECTORY_STORED: AtomicBool = AtomicBool::new(false);
+static FS_WRITE_LOGGED: AtomicBool = AtomicBool::new(false);
 static REPORTS: Mutex<()> = Mutex::new(());
 static FS_FRAME: AtomicU64 = AtomicU64::new(0);
 
@@ -68,6 +69,14 @@ pub fn start() -> Result<(), &'static str> {
     let queue = mm::alloc_frame_zeroed()?;
     let info = mm::alloc_frame_zeroed()?;
     let fs = mm::alloc_frame_zeroed()?;
+    let mut data_phys = [0u64; 8];
+    for (index, slot) in data_phys.iter_mut().enumerate() {
+        let frame = mm::alloc_frame_zeroed()?;
+        let virt = USER_SHARE + ((index as u64) + 1) * 4096;
+        mm::map_user_in(blk.cr3, virt, frame, UserPerm::UncachedRw)?;
+        *slot = frame;
+        mm::map_user_in(vfs.cr3, virt, frame, UserPerm::UncachedRw)?;
+    }
     mm::map_user_in(vfs.cr3, USER_SHARE, share, UserPerm::UncachedRw)?;
     mm::map_user_in(blk.cr3, USER_SHARE, share, UserPerm::UncachedRw)?;
     mm::map_user_in(blk.cr3, USER_QUEUE, queue, UserPerm::UncachedRw)?;
@@ -101,6 +110,7 @@ pub fn start() -> Result<(), &'static str> {
         share_phys: share,
         queue_virt: USER_QUEUE,
         share_virt: USER_SHARE,
+        data_phys,
     };
     unsafe {
         ((mm::hhdm() + info) as *mut BlkBoot).write_volatile(boot);
@@ -129,20 +139,21 @@ pub fn note_report(task: u64, ptr: u64, len: u64) {
         crate::kprintln!("meuxe: report task={task} unmapped");
         return;
     };
-    crate::kprintln!("meuxe: report task={task} len={len}");
     let share_lo = USER_SHARE + 16;
     let share_hi = share_lo + 512;
     let in_sector = ptr >= share_lo && ptr.saturating_add(len) <= share_hi;
     let write_lo = USER_SHARE + 2048 + 16;
     let write_hi = write_lo + 512;
     let in_write = ptr >= write_lo && ptr.saturating_add(len) <= write_hi;
-    if task == task::BLK as u64 && in_sector && &bytes[..len as usize] == b"MXLG" {
-        crate::kprintln!("meuxe: blk sector=MXLG");
+    if task == task::BLK as u64 && in_sector && &bytes[..len as usize] == b"MXDF" {
+        crate::kprintln!("meuxe: blk super=MXDF");
         BLK_OK.store(true, Ordering::Release);
     }
-    if task == task::BLK as u64 && in_write && &bytes[..len as usize] == b"MXLG" {
+    if task == task::BLK as u64 && in_write && &bytes[..len as usize] == b"MXDF" {
         if DIRECTORY_STORED.swap(true, Ordering::AcqRel) {
-            crate::kprintln!("meuxe: fs write=ok");
+            if !FS_WRITE_LOGGED.swap(true, Ordering::AcqRel) {
+                crate::kprintln!("meuxe: fs write=ok");
+            }
         } else {
             crate::kprintln!("meuxe: blk write=ok");
         }
@@ -150,6 +161,36 @@ pub fn note_report(task: u64, ptr: u64, len: u64) {
     if task == task::VFS as u64 && in_sector && &bytes[..len as usize] == b"meuxe-phase3" {
         crate::kprintln!("meuxe: vfs note=meuxe-phase3");
         VFS_OK.store(true, Ordering::Release);
+    }
+    if task == task::VFS as u64 && &bytes[..len as usize] == b"MOUNT" {
+        crate::kprintln!("meuxe: vfs mount=MXDF blocks=16384 inodes=256 mounts=1");
+    }
+    if task == task::TERMINAL as u64 {
+        if let Ok(text) = core::str::from_utf8(&bytes[..len as usize]) {
+            crate::kprintln!("meuxe: shell {text}");
+        }
+    }
+    if task == task::NET as u64 {
+        if let Ok(text) = core::str::from_utf8(&bytes[..len as usize]) {
+            if text.starts_with("mac=") {
+                crate::kprintln!("meuxe: net {text}");
+            } else if text.starts_with("prep=") {
+                crate::kprintln!("meuxe: net {text}");
+            } else {
+                crate::kprintln!("meuxe: {text}");
+            }
+        }
+    }
+    if task == task::BLK as u64 && &bytes[..len as usize] == b"RNG!" {
+        crate::kprintln!("meuxe: blk range lba=8 sectors=64 ok");
+    }
+    if task == task::BLK as u64
+        && (1..len as usize).all(|_| true)
+        && bytes[..len as usize].iter().all(|byte| byte.is_ascii_digit())
+    {
+        if let Ok(text) = core::str::from_utf8(&bytes[..len as usize]) {
+            crate::kprintln!("meuxe: blk capacity={text}");
+        }
     }
 }
 
@@ -183,10 +224,16 @@ fn install_caps(share: u64, mmio_phys: u64) -> Result<(), &'static str> {
         let mmio_handle = caps
             .install(blk, mmio, rw)
             .map_err(|_| "installing the blk mmio capability failed")?;
+        let irq = caps
+            .create(ObjectKind::Irq { vector: 33 })
+            .map_err(|_| "irq object table is full")?;
+        caps.install(blk, irq, Rights::READ)
+            .map_err(|_| "installing the blk irq capability failed")?;
         if vfs_ep.raw() != 1 || blk_ep.raw() != 1 {
             return Err("storage endpoint handle is not 1");
         }
         crate::kprintln!("meuxe: mmio_cap={}", mmio_handle.raw());
+        crate::kprintln!("meuxe: irq cap task={} vector=33", task::BLK);
         Ok(())
     })
 }
@@ -213,8 +260,8 @@ fn map_window(cr3: u64, virt_base: u64, phys: u64, len: u32) -> Result<u64, &'st
     Ok(virt_base + offset)
 }
 
-fn copy_user(ptr: u64, len: u64) -> Option<[u8; 32]> {
-    if len == 0 || len > 32 {
+fn copy_user(ptr: u64, len: u64) -> Option<[u8; 64]> {
+    if len == 0 || len > 64 {
         return None;
     }
     let len = len as usize;
@@ -225,7 +272,7 @@ fn copy_user(ptr: u64, len: u64) -> Option<[u8; 32]> {
     if flags & 4 == 0 || last_flags & 4 == 0 {
         return None;
     }
-    let mut buf = [0u8; 32];
+    let mut buf = [0u8; 64];
     for (index, slot) in buf.iter_mut().take(len).enumerate() {
         *slot = unsafe { ((ptr + index as u64) as *const u8).read_volatile() };
     }

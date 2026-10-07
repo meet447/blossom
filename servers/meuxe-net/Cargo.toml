@@ -1,0 +1,19 @@
+[package]
+name = "meuxe-net"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+publish = false
+description = "Meuxe virtio-net driver and stack server"
+
+[[bin]]
+name = "meuxe-net"
+path = "src/main.rs"
+test = false
+doctest = false
+bench = false
+
+[dependencies]
+meuxe-abi = { path = "../../crates/meuxe-abi" }
+meuxe-netstack = { path = "../../crates/meuxe-netstack" }
+meuxe-rt = { path = "../meuxe-rt" }

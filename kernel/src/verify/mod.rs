@@ -17,9 +17,10 @@ static READY_PHYS: AtomicU64 = AtomicU64::new(0);
 static FAILED: AtomicBool = AtomicBool::new(false);
 static LOGGED: AtomicBool = AtomicBool::new(false);
 
-const LISTING: &[u8] = b"note hello disk";
+const LISTING: &[u8] = b"bin etc home tmp";
 const NOTE: &[u8] = b"meuxe-phase3";
 const STORED: &[u8] = b"there";
+const ALPHA_BODY: &[u8] = b"meuxe-alpha";
 
 pub fn finish(boot: &BootInfo) -> Result<(), &'static str> {
     wait_echo(boot)?;
@@ -28,6 +29,11 @@ pub fn finish(boot: &BootInfo) -> Result<(), &'static str> {
     crate::kprintln!("meuxe: directory ready");
     wait_record(boot)?;
     crate::kprintln!("meuxe: write ready");
+    wait_free(boot)?;
+    wait_run_ok(boot)?;
+    wait_run_fault(boot)?;
+    wait_alpha(boot)?;
+    crate::kprintln!("meuxe: alpha ready");
     Ok(())
 }
 
@@ -84,7 +90,7 @@ pub fn wait_directory(boot: &BootInfo) -> Result<(), &'static str> {
     while sched::ticks().wrapping_sub(start) <= 4000 {
         if !saw_list && row_has(&fb, LISTING) {
             saw_list = true;
-            crate::kprintln!("meuxe: shell ls=note hello disk");
+            crate::kprintln!("meuxe: shell ls=/ bin etc home tmp");
         }
         if !saw_note && row_has(&fb, NOTE) {
             saw_note = true;
@@ -112,6 +118,50 @@ pub fn wait_record(boot: &BootInfo) -> Result<(), &'static str> {
         cpu::hlt();
     }
     Err("terminal did not print the new record")
+}
+
+pub fn wait_run_ok(boot: &BootInfo) -> Result<(), &'static str> {
+    let start = sched::ticks();
+    while sched::ticks().wrapping_sub(start) <= 20000 {
+        if shows(boot, b"exit=0") {
+            return Ok(());
+        }
+        cpu::hlt();
+    }
+    Err("terminal did not print exit=0")
+}
+
+pub fn wait_run_fault(boot: &BootInfo) -> Result<(), &'static str> {
+    let start = sched::ticks();
+    while sched::ticks().wrapping_sub(start) <= 20000 {
+        if shows(boot, b"exit=fault") {
+            return Ok(());
+        }
+        cpu::hlt();
+    }
+    Err("terminal did not print exit=fault")
+}
+
+pub fn wait_alpha(boot: &BootInfo) -> Result<(), &'static str> {
+    let start = sched::ticks();
+    while sched::ticks().wrapping_sub(start) <= 60000 {
+        if shows(boot, ALPHA_BODY) {
+            return Ok(());
+        }
+        cpu::hlt();
+    }
+    Err("terminal did not show fetch body")
+}
+
+pub fn wait_free(boot: &BootInfo) -> Result<(), &'static str> {
+    let start = sched::ticks();
+    while sched::ticks().wrapping_sub(start) <= 20000 {
+        if shows(boot, b"free=") {
+            return Ok(());
+        }
+        cpu::hlt();
+    }
+    Err("terminal did not print free space")
 }
 
 fn non_zero(value: u64) -> Option<u64> {

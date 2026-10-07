@@ -152,6 +152,10 @@ pub fn key_of(code: u16) -> Option<Key> {
         16..=25 => Some(Key::Char(b"qwertyuiop"[(code - 16) as usize])),
         30..=38 => Some(Key::Char(b"asdfghjkl"[(code - 30) as usize])),
         44..=50 => Some(Key::Char(b"zxcvbnm"[(code - 44) as usize])),
+        2..=10 => Some(Key::Char(b"123456789"[(code - 2) as usize])),
+        11 => Some(Key::Char(b'0')),
+        52 => Some(Key::Char(b'.')),
+        53 => Some(Key::Char(b'/')),
         _ => None,
     }
 }
@@ -206,26 +210,27 @@ mod app {
     }
 
     impl Dir {
-        pub fn list(&self, out: &mut [u8]) -> usize {
-            self.call(OP_LIST, b"", b"", out)
+        pub fn list(&self, path: &[u8], out: &mut [u8]) -> usize {
+            self.call(OP_LIST, path, b"", out)
         }
 
-        pub fn read(&self, name: &[u8], out: &mut [u8]) -> usize {
-            self.call(OP_READ, name, b"", out)
+        pub fn read(&self, path: &[u8], out: &mut [u8]) -> usize {
+            self.call(OP_READ, path, b"", out)
         }
 
-        pub fn write(&self, name: &[u8], data: &[u8], out: &mut [u8]) -> usize {
-            self.call(OP_WRITE, name, data, out)
+        pub fn write(&self, path: &[u8], data: &[u8], out: &mut [u8]) -> usize {
+            self.call(OP_WRITE, path, data, out)
         }
 
         fn call(&self, op: u32, name: &[u8], data: &[u8], out: &mut [u8]) -> usize {
-            let name_len = name.len().min(16);
+            let name_len = name.len().min(64);
             let data_len = data.len().min(32);
             unsafe {
                 (self.page as *mut u32).write_volatile(op);
                 ((self.page + 4) as *mut u32).write_volatile(name_len as u32);
-                let slot = (self.page + 8) as *mut u8;
-                for index in 0..16 {
+                ((self.page + 116) as *mut u32).write_volatile(if op == OP_WRITE { 1 | 2 } else { 0 });
+                let slot = (self.page + 128) as *mut u8;
+                for index in 0..64 {
                     let byte = if index < name_len { name[index] } else { 0 };
                     slot.add(index).write_volatile(byte);
                 }
@@ -599,6 +604,8 @@ mod tests {
         assert_eq!(key_of(57), Some(Key::Char(b' ')));
         assert_eq!(key_of(28), Some(Key::Enter));
         assert_eq!(key_of(14), Some(Key::Backspace));
+        assert_eq!(key_of(53), Some(Key::Char(b'/')));
+        assert_eq!(key_of(52), Some(Key::Char(b'.')));
         assert_eq!(key_of(1), None);
     }
 

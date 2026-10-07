@@ -2,7 +2,7 @@
 
 Meuxe is a capability-based microkernel for x86_64. The target shape is closer to seL4, Fuchsia, or Redox than to a monolithic Unix: the kernel keeps address spaces, scheduling, and object capabilities; drivers and the compositor run in isolated userspace and talk through shared rings.
 
-This document is the plan. Boot, the scheduler, storage, the desktop, and the shell are in the tree.
+This document describes what is in the tree: boot, the scheduler, storage, the desktop, and the shell. The first alpha, which adds a hierarchical disk, the filesystem command set, program spawn, and a network, is [ALPHA.md](ALPHA.md).
 
 ## Invariants
 
@@ -36,14 +36,14 @@ An early console draws on the GOP framebuffer. The glyphs live in `meuxe-font` (
 | Path | Role |
 | --- | --- |
 | `init` | Machine bring-up through `boot ready`, then the scheduler proof |
-| `task.rs` | Every task id. The table stops at 16 |
+| `task.rs` | Every task id. The table holds 64. Ids 0–7 are idle slots |
 | `exec` | Load an ET_EXEC ELF into a private address space |
 | `dev` | Virtio PCI windows and MSI-X completion lanes |
 | `service` | Userspace servers. `start` runs storage, then the desktop |
 | `verify` | Framebuffer sampling used by `make verify` |
 | `sched`, `cap`, `ipc`, `mm`, `arch` | Scheduler, capabilities, rings, paging, x86_64 |
 
-Task ids: 0 is the boot thread, 1 is the idle thread of CPU 1, 2 is the calculator, 4 is the capability mint target and is not scheduled, 8 is the steal proof, 9 is the ring-3 stub, 10 is the VFS, 11 is virtio-blk, 12 is the compositor, 13 is the terminal, 14 is input, and 15 is Files. Free on a two-CPU boot: 3, 5, 6, and 7. A seventeenth task does not fit. A third CPU would claim task 2, so this alpha stays at two CPUs.
+Task ids: 0 is the boot thread and 1 is the idle thread of CPU 1. Ids 2 through 7 stay reserved for later CPUs. 8 is the steal proof, 9 is the ring-3 stub, 10 is the VFS, 11 is virtio-blk, 12 is the compositor, 13 is the terminal, 14 is input, 15 is Files, and 16 is the calculator. 17 is the virtio-net server. 18 is the capability mint target and is not scheduled. Ids 24 through 63 are for programs the shell spawns. Alpha still boots two CPUs.
 
 ## Scheduler
 
@@ -53,7 +53,7 @@ Each userspace server has its own PML4. The upper half is the kernel page tables
 
 The ring-3 proof is one page of position-independent code at `0x400000` (user, present, not writable, not no-execute), a user stack at `0x600000`, and a 4 KiB ring page at `0x800000` (user, writable, no-execute). Intermediate page-table entries carry the user bit. The first entry to ring 3 is `iretq`. Later returns use `sysretq`. `EFER.SCE` is set. `STAR` selects kernel CS `0x08` on entry and user CS `0x23` / SS `0x1b` on `sysret`.
 
-Syscall numbers: 0 returns the task id, 1 drains that task's submission queue and returns the completion count, 2 yields and records a status word, 3 reports bytes from a user pointer (`SYS_REPORT`), and 4 sleeps until an MSI-X vector fires (`SYS_WAIT_IRQ`). The ring-3 stub marks SysV caller-saved registers clobbered across `syscall`, because the kernel dispatch is ordinary Rust and only restores `rbx`. The user stub submits NOP, SEND, RECV, and MAP, then checks four successful completions, a mailbox write of the SEND payload, and a non-zero MAP frame number. SEND and RECV rendezvous on the endpoint. A RECV mailbox must be 8-byte aligned inside the ring page. MAP returns the physical frame number (`phys >> 12`) in the completion flags; `SQ_FLAG_MAP_WRITE` requires `Write` on the frame.
+Syscall numbers: 0 returns the task id, 1 drains that task's submission queue and returns the completion count, 2 yields and records a status word, 3 reports bytes from a user pointer (`SYS_REPORT`), and 4 sleeps until an MSI-X vector fires (`SYS_WAIT_IRQ`). 5 spawns an ELF the caller already loaded (`SYS_SPAWN`). 6 exits that task (`SYS_EXIT`). The ring-3 stub marks SysV caller-saved registers clobbered across `syscall`, because the kernel dispatch is ordinary Rust and only restores `rbx`. The user stub submits NOP, SEND, RECV, and MAP, then checks four successful completions, a mailbox write of the SEND payload, and a non-zero MAP frame number. SEND and RECV rendezvous on the endpoint. A RECV mailbox must be 8-byte aligned inside the ring page. MAP returns the physical frame number (`phys >> 12`) in the completion flags; `SQ_FLAG_MAP_WRITE` requires `Write` on the frame.
 
 Limine's multiprocessor request (xAPIC, not x2APIC) starts the second processor. The application processor loads the kernel CR3 before it touches non-direct-map memory, then installs its own GDT and TSS (`ltr` on a shared busy TSS is a general-protection fault), loads the existing IDT, binds `GS` to its `PerCpu`, and arms the local APIC timer from the bootstrap calibration. The timer vector is still 32.
 
@@ -62,18 +62,14 @@ The scheduler is a fixed task table with a queue per CPU, round-robin, quantum o
 ## Not in this kernel yet
 
 - Unmask I/O APIC lines, or program x2APIC, SMEP, or SMAP.
-- VirtIO-GPU, VirtIO-Net, NVMe, AHCI, PS/2, or Ext2.
-- A seventeenth task. The table is 16 entries.
+- VirtIO-GPU, VirtIO-Net, NVMe, AHCI, PS/2, or a hierarchical filesystem. VirtIO-Net and the filesystem are the alpha in [ALPHA.md](ALPHA.md). VirtIO-GPU, NVMe, AHCI, PS/2, and ext2 stay out of that alpha.
+- More than two CPUs. The table holds 64 tasks and reserves ids 0–7 for idle threads.
 
 ## Storage
 
 The scheduler's ring-3 stub still runs in the kernel page tables. After `sched ready`, the kernel loads two static ELF64 executables from an in-memory initramfs. Each gets its own PML4. The upper half is the kernel's page tables, shared. The lower half is private. The scheduler writes CR3 when it switches to a task that has its own PML4.
 
-`meuxe-elf` accepts ELF64, little-endian, x86_64, `ET_EXEC`, and rejects a segment that is both writable and executable. `meuxe-fs` packs the initramfs (`MXFS`) and the on-disk log (`MXLG`, version 1, name/data records). The disk image's first two sectors are that log. Records are `note` (`meuxe-phase3`), `hello`, and `disk`. The log is longer than one sector, and `note` still begins in sector 0.
-
-The block driver is the `meuxe-blk` program. The kernel scans PCI, enables memory space and bus master on virtio-blk, programs MSI-X entry 0 with vector 33, and installs an MMIO capability. It maps the common-config and notify windows uncached into that driver's address space. The driver negotiates virtio 1.0, builds one queue, sets the queue MSI-X vector before enabling the queue, and sleeps in `SYS_WAIT_IRQ` until vector 33. I/O APIC lines stay masked. The two-sector read lands in a page that is also mapped read-only into the VFS. The driver then `SEND`s on a shared endpoint and reports the first four data bytes (`MXLG`).
-
-`meuxe-vfs` has posted `RECV`. It parses the log and reports the `note` record from the share page. Mailbox writes and completions use the direct map, so the rendezvous works across the two page tables.
+The block driver is the `meuxe-blk` program. The kernel scans PCI, enables memory space and bus master on virtio-blk, programs MSI-X entry 0 with vector 33, and installs an MMIO capability. It maps the common-config and notify windows uncached into that driver's address space. The VFS reads and writes **MXDF** on the data disk through ranged block I/O; paths are absolute, and the shell commands in [ALPHA.md](ALPHA.md) go through that RPC.
 
 Storage does not include a compositor, VirtIO-GPU, VirtIO-Net, NVMe, AHCI, PS/2, or Ext2. I/O APIC lines stay masked.
 
@@ -89,7 +85,7 @@ The input program drives a virtio-tablet (modern PCI id `0x1052`, the first such
 
 ## Shell
 
-The compositor draws a title bar and a border around three windows, using the shared 8×8 font at 2× for the titles `Terminal`, `Files`, and `Calc`. The cells underneath those titles are not moved. Holding the tablet button on a title drags that window; the compositor keeps the app's dirty rectangles in boot coordinates and adds the distance the frame has moved. The button on the right of the title closes the window. Term, Files, and Calc icons on the left of the desktop open a window again. A button press inside the Files window selects the record under the pointer. The calculator sits under the terminal and takes pointer presses on its keys. The verify pointer is a button-up sample, so that first event still hit-tests only the 16×16 window. A bar along the bottom of the screen names the open windows; a button press on a name focuses that window.
+The compositor draws a title bar and a border around three windows, using the shared 8×8 font at 2× for the titles `Terminal`, `Files`, and `Calc`. The cells underneath those titles are not moved. Holding the tablet button on a title drags that window. Holding it on the left, right, or bottom edge, including the corner, resizes the frame; the content stays top-left and is clipped to the new size. The compositor keeps each app's dirty rectangles in boot coordinates and adds the distance the frame has moved. The button on the right of the title closes the window. Term, Files, and Calc icons on the left of the desktop open a window again. A button press inside the Files window selects the record under the pointer. The calculator sits under the terminal and takes pointer presses on its keys. The verify pointer is a button-up sample, so that first event still hit-tests only the 16×16 window. A bar along the bottom of the screen names the open windows; a button press on a name focuses that window.
 
 `meuxe_ui::theme` is the shared palette: desktop, ink, accent, panel, title, edge, close, and shadow. The calculator's arithmetic and key map live in `meuxe-ui` so a host test can press `12 + 30` without booting.
 
@@ -99,7 +95,7 @@ The terminal client is the shell. Below the desktop window, at (64, 200), it own
 
 A second virtio-input device (PCI id `0x1052`, the second one QEMU enumerates) is the keyboard, on MSI-X vector 35. The kernel maps its queue, event page, and a separate ready byte into the same input task and installs one more endpoint. That endpoint is handle 2 on both the input task and the client. The task sleeps in `SYS_WAIT_IRQ` on vector 34 or 35 when both used rings are caught up and nothing is waiting to send. Only key-down events are forwarded (`EV_KEY` with value 1), packed with bit 63 set so a key cannot look like a pointer. The kernel logs `meuxe: kbd irq` from that syscall. The terminal maps Linux evdev codes for the QWERTY rows, space, enter, and backspace.
 
-The shell keeps a line after the `meuxe> ` prompt. Enter runs `help`, `echo` (the rest of the line after one space), `clear`, `ls`, `cat`, `write`, `fetch` (also `neofetch`), or prints `?`. `fetch` draws a blossom mark beside the os, architecture, framebuffer size, terminal size, and shell. Output of `echo hi` is what the shell check samples. `make verify` waits until `desktop ready` and `kbd listening`, then sends `echo hi` over QMP with no device name (QEMU treats that argument as a console, not a qdev id). The kernel samples the framebuffer with `meuxe-font` and logs `shell line=hi` when cell (0, 2) is `h` and cell (1, 2) is `i` in the terminal foreground on the terminal background.
+The shell keeps a line after the `meuxe> ` prompt. Enter runs `help`, `echo` (the rest of the line after one space), `clear`, the MXDF path commands (`ls`, `cat`, `write`, `append`, `mkdir`, `rm`, `mv`, `cp`, `stat`, `df`), `run`, `ping`, and `fetch`, or prints `?`. `neofetch` still draws the blossom mark. `fetch` asks `meuxe-net` for `GET /` and prints the HTTP status and body. Output of `echo hi` is what the shell check samples. `make verify` waits until `desktop ready` and `kbd listening`, then sends `echo hi` over QMP with no device name (QEMU treats that argument as a console, not a qdev id). The kernel samples the framebuffer with `meuxe-font` and logs `shell line=hi` when cell (0, 2) is `h` and cell (1, 2) is `i` in the terminal foreground on the terminal background.
 
 ## Directory
 
@@ -113,9 +109,9 @@ After the first read, the block driver writes those 1024 bytes to sector 2 and r
 
 `write NAME text` appends one record in front of the log terminator. The bytes before that terminator stay put, so `note` remains at the start of sector 0. The VFS copies the updated 1024-byte image into the block driver's buffer and `SEND`s on the existing block endpoint. The driver writes those two sectors back to sector 0 through the same MSI-X wait, then replies. The kernel logs `meuxe: fs write=ok` on that second store. The shell prints the stored text, which for the verify command is `there`.
 
-`make verify` sends `write hi there` only after `directory ready`. Fifteen key-downs are 30 events, which still fits the keyboard queue of 32. The kernel scans for that row, logs `meuxe: shell wrote=there` and `meuxe: write ready`, and writes the debug-exit port. Without `--features verify` the kernel does not call that scan and does not write the port. `make run` stays up so a person can type `ls`, `cat note`, and `write`.
+`make verify` sends `write hi there` only after `directory ready`. Fifteen key-downs are 30 events, which still fits the keyboard queue of 64. The kernel scans for that row and logs `meuxe: shell wrote=there` and `meuxe: write ready`. Later batches run `/bin/hello`, `/bin/fault`, `ping 10.0.2.2`, and `fetch 10.0.2.100`. The kernel writes the debug-exit port after `meuxe: alpha ready`. Without `--features verify` the kernel does not call that scan and does not write the port. `make run` stays up so a person can type.
 
-VirtIO-GPU, VirtIO-Net, NVMe, AHCI, PS/2, Ext2, TrueType, and a full Wayland protocol are not in this tree.
+VirtIO-GPU, NVMe, AHCI, PS/2, Ext2, TrueType, and a full Wayland protocol are not in this tree. Virtio-net is task 17.
 
 ## Boot acceptance
 
@@ -125,7 +121,7 @@ Before `boot ready` the log shows a 2 MiB frame, a live CR3, the PTE flags above
 
 Between the two ready lines the log shows `meuxe: cpus_online=2`, task 8 running on CPU 1 with a non-zero steal count, `meuxe: syscall task=9 submit=4`, and `meuxe: user yield status=0`.
 
-After `sched ready` the log shows distinct CR3 values for the VFS and the block driver, a virtio-blk MMIO window, `meuxe: blk sector=MXLG`, `meuxe: vfs note=meuxe-phase3`, and `meuxe: storage ready`. QEMU is given a raw disk and `virtio-blk-pci` with legacy mode disabled.
+After `sched ready` the log shows distinct CR3 values for the VFS and the block driver, a virtio-blk MMIO window, `meuxe: blk super=MXDF`, `meuxe: vfs note=meuxe-phase3`, and `meuxe: storage ready`. QEMU is given a raw MXDF disk and `virtio-blk-pci` with legacy mode disabled.
 
 After `storage ready` the log shows `meuxe: desktop fb`, `meuxe: virtio-tablet msix vector=34`, `meuxe: tablet listening`, `meuxe: tablet irq`, `meuxe: desktop pixel=0xe07a3d`, `meuxe: desktop hit=1`, and `meuxe: desktop ready`. QEMU also has `virtio-tablet-pci` and `virtio-keyboard-pci`, both with legacy mode disabled. The verify recipe injects the pointer over a QMP socket after the tablet driver has posted its buffers.
 
@@ -134,3 +130,5 @@ After `desktop ready` the log shows `meuxe: virtio-keyboard msix vector=35`, `me
 After `echo ready` the log shows `meuxe: blk irq`, `meuxe: blk write=ok`, and `meuxe: directory ready`. The second batch is `l s ret c a t spc n o t e ret`.
 
 After `directory ready` the log shows `meuxe: fs write=ok`, `meuxe: shell wrote=there`, and `meuxe: write ready`. The third batch is `w r i t e spc h i spc t h e r e ret`.
+
+The rest of the alpha log is `meuxe: shell mkdir=/tmp/d ok`, `meuxe: shell cat=/home/b onetwo`, `meuxe: shell rm=/tmp/d ok`, `meuxe: shell df free=`, `meuxe: spawn task=24`, `meuxe: shell run=/bin/hello exit=0`, `meuxe: shell run=/bin/fault exit=fault`, `meuxe: shell ping=10.0.2.2 rx=4/4`, `meuxe: tcp 10.0.2.100:80 state=established`, `meuxe: shell fetch=10.0.2.100 status=200 bytes=11 body=meuxe-alpha`, and `meuxe: alpha ready`. The full list is [ALPHA.md](ALPHA.md).

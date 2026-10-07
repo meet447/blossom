@@ -3,6 +3,7 @@
 use super::cpu;
 use super::percpu;
 use crate::ipc;
+use crate::task;
 use core::arch::global_asm;
 use core::sync::atomic::{AtomicU64, Ordering};
 
@@ -15,7 +16,6 @@ const EFER_SCE: u64 = 1;
 
 static YIELD_STATUS: AtomicU64 = AtomicU64::new(u64::MAX);
 static YIELD_TASK: AtomicU64 = AtomicU64::new(0);
-
 extern "C" {
     fn syscall_entry();
 }
@@ -46,7 +46,9 @@ extern "C" fn syscall_dispatch(number: u64, a0: u64, a1: u64) -> u64 {
         meuxe_abi::SYS_TASK_ID => task,
         meuxe_abi::SYS_RING_PROCESS => {
             let completed = ipc::process_ring(task);
-            crate::kprintln!("meuxe: syscall task={task} submit={completed}");
+            if completed != 0 {
+                crate::kprintln!("meuxe: syscall task={task} submit={completed}");
+            }
             completed as u64
         }
         meuxe_abi::SYS_REPORT => {
@@ -54,8 +56,12 @@ extern "C" fn syscall_dispatch(number: u64, a0: u64, a1: u64) -> u64 {
             0
         }
         meuxe_abi::SYS_WAIT_IRQ => {
-            crate::dev::irq::wait(a0, a1);
+            crate::dev::irq::wait(task, a0, a1);
             0
+        }
+        meuxe_abi::SYS_SPAWN => crate::proc::spawn(task as u8, a0, a1),
+        meuxe_abi::SYS_EXIT => {
+            crate::proc::exit(task as u8, a0 as u32);
         }
         meuxe_abi::SYS_YIELD => {
             if YIELD_STATUS

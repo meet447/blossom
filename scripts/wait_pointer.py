@@ -11,7 +11,24 @@ AXIS_MAX = 32767
 # Down then up. Space is `spc` and enter is `ret` in QEMU's qcode list.
 KEYS = ("e", "c", "h", "o", "spc", "h", "i", "ret")
 # A second batch. One batch of every key would overflow the 32-event queue.
-DIRECTORY = ("l", "s", "ret", "c", "a", "t", "spc", "n", "o", "t", "e", "ret")
+DIRECTORY = ("l", "s", "ret")
+CAT = (
+    "c",
+    "a",
+    "t",
+    "spc",
+    "slash",
+    "h",
+    "o",
+    "m",
+    "e",
+    "slash",
+    "n",
+    "o",
+    "t",
+    "e",
+    "ret",
+)
 # Fifteen key-downs is thirty events, which still fits the queue of 32.
 WRITE = (
     "w",
@@ -44,9 +61,23 @@ def main() -> None:
     wait_for(log_path, 40, terminal_ready)
     send_keys(stream, KEYS, "echo hi")
     wait_for(log_path, 40, line_ready)
-    send_keys(stream, DIRECTORY, "ls cat")
+    send_keys(stream, DIRECTORY, "ls")
+    wait_for(log_path, 40, listing_ready)
+    send_keys(stream, CAT, "cat /home/note")
     wait_for(log_path, 40, directory_ready)
     send_keys(stream, WRITE, "write hi there")
+    wait_for(log_path, 40, write_ready)
+    for command, marker in FS_STEPS:
+        send_keys(stream, qcodes(command), command)
+        wait_for(log_path, 40, lambda text, marker=marker: True if marker in text else None)
+    send_keys(stream, qcodes("run /bin/hello"), "run /bin/hello")
+    wait_for(log_path, 60, hello_ready)
+    send_keys(stream, qcodes("run /bin/fault"), "run /bin/fault")
+    wait_for(log_path, 60, fault_ready)
+    send_keys(stream, qcodes("ping 10.0.2.2"), "ping 10.0.2.2")
+    wait_for(log_path, 60, ping_ready)
+    send_keys(stream, qcodes("fetch 10.0.2.100"), "fetch 10.0.2.100")
+    wait_for(log_path, 120, fetch_ready)
 
 
 def listening(text: str):
@@ -77,10 +108,78 @@ def line_ready(text: str):
     return None
 
 
+def listing_ready(text: str):
+    if "meuxe: shell ls=/ bin etc home tmp" in text:
+        return True
+    return None
+
+
 def directory_ready(text: str):
     if "meuxe: directory ready" in text:
         return True
     return None
+
+
+def write_ready(text: str):
+    if "meuxe: write ready" in text:
+        return True
+    return None
+
+
+def hello_ready(text: str):
+    if "meuxe: shell run=/bin/hello exit=0" in text:
+        return True
+    return None
+
+
+def fault_ready(text: str):
+    if "meuxe: shell run=/bin/fault exit=fault" in text:
+        return True
+    return None
+
+
+def ping_ready(text: str):
+    if "meuxe: shell ping=10.0.2.2 rx=4/4" in text:
+        return True
+    return None
+
+
+def fetch_ready(text: str):
+    if "meuxe: shell fetch=10.0.2.100 status=200 bytes=11 body=meuxe-alpha" in text:
+        return True
+    return None
+
+
+FS_STEPS = (
+    ("mkdir /tmp/d", "meuxe: shell mkdir=/tmp/d ok"),
+    ("write /tmp/d/a one", "meuxe: shell write=/tmp/d/a ok"),
+    ("append /tmp/d/a two", "meuxe: shell append=/tmp/d/a ok"),
+    ("cp /tmp/d/a /tmp/d/b", "meuxe: shell cp=/tmp/d/b ok"),
+    ("mv /tmp/d/b /home/b", "meuxe: shell mv=/home/b ok"),
+    ("cat /home/b", "meuxe: shell cat=/home/b onetwo"),
+    ("rm /tmp/d/a", "meuxe: shell rm=/tmp/d/a ok"),
+    ("rm /tmp/d", "meuxe: shell rm=/tmp/d ok"),
+    ("df", "meuxe: shell df free="),
+)
+
+
+def qcodes(text: str):
+    keys = []
+    for ch in text:
+        if ch == " ":
+            keys.append("spc")
+        elif ch == "/":
+            keys.append("slash")
+        elif ch == ".":
+            keys.append("dot")
+        elif "a" <= ch <= "z":
+            keys.append(ch)
+        elif ch.isdigit():
+            keys.append(ch)
+        else:
+            raise SystemExit(f"no qcode for {ch!r}")
+    keys.append("ret")
+    return tuple(keys)
 
 
 def wait_for(log_path: str, seconds: float, parse):

@@ -8,6 +8,7 @@ members = [
     "crates/meuxe-fs",
     "crates/meuxe-font",
     "crates/meuxe-logo",
+    "crates/meuxe-netstack",
     "crates/meuxe-ui",
     "servers/meuxe-rt",
     "servers/meuxe-vfs",
@@ -17,6 +18,9 @@ members = [
     "servers/meuxe-files",
     "servers/meuxe-calc",
     "servers/meuxe-input",
+    "servers/meuxe-hello",
+    "servers/meuxe-fault",
+    "servers/meuxe-net",
     "kernel",
 ]
 

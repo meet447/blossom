@@ -158,6 +158,46 @@ impl CapSpace {
         self.objects.get_mut(object)
     }
 
+    pub fn revoke_task(&mut self, task: TaskId) {
+        for slot in &mut self.tasks[task.index()].slots {
+            *slot = Slot::empty();
+        }
+    }
+
+    /// Vector of the first `Irq` capability installed in this task, in slot order.
+    pub fn first_irq(&self, task: TaskId) -> Option<u32> {
+        for slot in &self.tasks[task.index()].slots {
+            if slot.cap_type as u8 != CapType::Irq as u8 {
+                continue;
+            }
+            let Some(object) = ObjectId::from_index(slot.object as usize) else {
+                continue;
+            };
+            if let ObjectKind::Irq { vector } = self.objects.get(object) {
+                return Some(*vector);
+            }
+        }
+        None
+    }
+
+    /// Whether this task holds an `Irq` capability for `vector`.
+    pub fn has_irq(&self, task: TaskId, vector: u32) -> bool {
+        for slot in &self.tasks[task.index()].slots {
+            if slot.cap_type as u8 != CapType::Irq as u8 {
+                continue;
+            }
+            let Some(object) = ObjectId::from_index(slot.object as usize) else {
+                continue;
+            };
+            if let ObjectKind::Irq { vector: have } = self.objects.get(object) {
+                if *have == vector {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
     fn slot(&self, task: TaskId, handle: CapHandle) -> Result<Slot, CapError> {
         if handle.is_null() {
             return Err(CapError::Null);

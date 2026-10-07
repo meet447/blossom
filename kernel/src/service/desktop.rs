@@ -18,7 +18,8 @@ use crate::dev::pci;
 use crate::sched;
 use crate::task;
 use meuxe_abi::{
-    CalcBoot, ClientBoot, CompositorBoot, FilesBoot, InputBoot, KeyboardBoot, Rights, CALC_COLS,
+    CalcBoot, ClientBoot, CompositorBoot, FilesBoot, InputBoot, KeyboardBoot, Rights, USER_CHILD,
+    USER_IMAGE, USER_IMAGE_BYTES, CALC_COLS,
     CALC_PX_H, CALC_PX_W, CALC_ROWS, CALC_SCALE, CALC_X, CALC_Y, FILES_PX_H, FILES_PX_W, FILES_SCALE,
     FILES_X, FILES_Y, USER_BACK, USER_CALC, USER_CALC_PICK, USER_FB, USER_FILES, USER_FRONT, USER_FS,
     USER_FS_FILES, USER_INFO, USER_KBD_EVENT, USER_KBD_INFO, USER_KBD_QUEUE, USER_KBD_READY,
@@ -276,6 +277,14 @@ pub fn start(boot: &BootInfo) -> Result<(), &'static str> {
         return Err("filesystem page is missing");
     }
     mm::map_user_in(client.cr3, USER_FS, fs, UserPerm::Rw)?;
+    let child_share = mm::alloc_frame_zeroed()?;
+    mm::map_user_in(client.cr3, USER_CHILD, child_share, UserPerm::Rw)?;
+    crate::proc::init_terminal(child_share);
+    let image_pages = (USER_IMAGE_BYTES / 4096) as usize;
+    for index in 0..image_pages {
+        let frame = mm::alloc_frame_zeroed()?;
+        mm::map_user_in(client.cr3, USER_IMAGE + (index as u64) * 4096, frame, UserPerm::Rw)?;
+    }
 
     install_caps(fb.phys, bytes)?;
     ipc::register_ring(task::COMPOSITOR, compositor.ring_phys);
@@ -283,12 +292,15 @@ pub fn start(boot: &BootInfo) -> Result<(), &'static str> {
     ipc::register_ring(task::INPUT, input.ring_phys);
     ipc::register_ring(task::FILES, files.ring_phys);
     ipc::register_ring(task::CALC, calc.ring_phys);
-    sched::spawn_user_elf(task::COMPOSITOR, compositor.entry, compositor.cr3);
+    crate::service::net::start(client.cr3)?;
+    crate::kprintln!("meuxe: net ready");
     sched::spawn_user_elf(task::TERMINAL, client.entry, client.cr3);
+    sched::spawn_user_elf(task::COMPOSITOR, compositor.entry, compositor.cr3);
     sched::spawn_user_elf(task::INPUT, input.entry, input.cr3);
     sched::spawn_user_elf(task::FILES, files.entry, files.cr3);
     sched::spawn_user_elf(task::CALC, calc.entry, calc.cr3);
     crate::kprintln!("meuxe: files window");
+    crate::kprintln!("meuxe: calc task={}", task::CALC);
     crate::kprintln!("meuxe: calc window");
 
     if !cfg!(feature = "verify") {
@@ -446,6 +458,16 @@ fn install_caps(fb_phys: u64, fb_len: u64) -> Result<(), &'static str> {
         if calc_ep.raw() != 1 || comp_calc.raw() != 5 {
             return Err("calc handles are not 1 and 5");
         }
+        let tablet_irq = caps
+            .create(ObjectKind::Irq { vector: 34 })
+            .map_err(|_| "tablet irq object table is full")?;
+        let kbd_irq = caps
+            .create(ObjectKind::Irq { vector: 35 })
+            .map_err(|_| "keyboard irq object table is full")?;
+        caps.install(input, tablet_irq, Rights::READ)
+            .map_err(|_| "installing the tablet irq capability failed")?;
+        caps.install(input, kbd_irq, Rights::READ)
+            .map_err(|_| "installing the keyboard irq capability failed")?;
         Ok(())
     })
 }

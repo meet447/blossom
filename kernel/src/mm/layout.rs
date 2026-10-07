@@ -11,7 +11,7 @@ pub const IOAPIC_STRIDE: u64 = 0x1000;
 /// Virtio-blk is first, then the tablet, then the keyboard.
 pub const MSI_VIRT: u64 = 0xFFFF_FF80_0030_0000;
 pub const MSI_STRIDE: u64 = 0x4000;
-pub const MSI_DEVICES: u64 = 3;
+pub const MSI_DEVICES: u64 = 4;
 
 /// Ring 3 proof pages. They sit in PML4 slot 0, away from the higher-half map.
 pub const USER_TEXT: u64 = 0x0000_0000_0040_0000;
