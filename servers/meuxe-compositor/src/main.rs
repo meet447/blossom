@@ -2,9 +2,10 @@
 //!
 //! The first rectangle is the desktop window. Later rectangles are the
 //! terminal or the file manager. A button-up sample hit-tests that window.
-//! A button press drags a title bar, closes a frame, or opens one from its
-//! desktop icon. Clients keep sending rectangles at the boot origins; this
-//! task adds the distance the window has moved.
+//! A button press drags a title bar, resizes from a border, closes a frame,
+//! or opens one from its desktop icon. Clients keep sending rectangles at the
+//! boot origins; this task adds the distance the window has moved and clips
+//! them to the size chosen with the pointer.
 
 #![no_std]
 #![no_main]
@@ -62,6 +63,13 @@ const ICON_Y_CALC: u32 = 120;
 const ICON_BOX: u32 = 32;
 const ICON_HIT_W: u32 = 40;
 const ICON_HIT_H: u32 = 44;
+/// Pointer grab along a window edge. Wide enough to hit; the chrome itself is 2px.
+const GRIP: u32 = 10;
+const MIN_W: u32 = 160;
+const MIN_H: u32 = 96;
+const EDGE_LEFT: u8 = 1;
+const EDGE_RIGHT: u8 = 2;
+const EDGE_BOTTOM: u8 = 4;
 
 struct Desktop {
     term_x: u32,
@@ -76,6 +84,12 @@ struct Desktop {
     focus: u8,
     win_x: u32,
     win_y: u32,
+    term_w: u32,
+    term_h: u32,
+    files_w: u32,
+    files_h: u32,
+    calc_w: u32,
+    calc_h: u32,
 }
 
 impl Desktop {
@@ -89,9 +103,9 @@ impl Desktop {
 
     fn rect(&self, kind: u8) -> Rect {
         let (x, y, w, h) = match kind {
-            FOCUS_FILES => (self.files_x, self.files_y, FILES_PX_W, FILES_PX_H),
-            FOCUS_CALC => (self.calc_x, self.calc_y, CALC_PX_W, CALC_PX_H),
-            _ => (self.term_x, self.term_y, TERM_PX_W, TERM_PX_H),
+            FOCUS_FILES => (self.files_x, self.files_y, self.files_w, self.files_h),
+            FOCUS_CALC => (self.calc_x, self.calc_y, self.calc_w, self.calc_h),
+            _ => (self.term_x, self.term_y, self.term_w, self.term_h),
         };
         content_rect(x, y, w, h)
     }
@@ -128,6 +142,23 @@ impl Desktop {
             }
         }
     }
+
+    fn set_size(&mut self, kind: u8, w: u32, h: u32) {
+        match kind {
+            FOCUS_FILES => {
+                self.files_w = w;
+                self.files_h = h;
+            }
+            FOCUS_CALC => {
+                self.calc_w = w;
+                self.calc_h = h;
+            }
+            _ => {
+                self.term_w = w;
+                self.term_h = h;
+            }
+        }
+    }
 }
 
 /// Front window first.
@@ -144,6 +175,14 @@ struct Grab {
     kind: u8,
     dx: i32,
     dy: i32,
+    /// Zero moves the window. Otherwise `EDGE_*` bits resize it.
+    edges: u8,
+    x0: u32,
+    y0: u32,
+    w0: u32,
+    h0: u32,
+    px0: i32,
+    py0: i32,
 }
 
 struct Stamp<const N: usize> {
@@ -204,6 +243,12 @@ extern "C" fn main() -> ! {
         focus: FOCUS_TERM,
         win_x: WINDOW_X,
         win_y: WINDOW_Y,
+        term_w: TERM_PX_W,
+        term_h: TERM_PX_H,
+        files_w: FILES_PX_W,
+        files_h: FILES_PX_H,
+        calc_w: CALC_PX_W,
+        calc_h: CALC_PX_H,
     };
     paint_frames(boot, &desk);
     paint_icons(boot);
@@ -342,6 +387,12 @@ fn handle_press(boot: &CompositorBoot, desk: &mut Desktop, px: u32, py: u32) -> 
             close_frame(boot, desk, kind);
             return None;
         }
+        if let Some(edges) = resize_hit(rect, px, py) {
+            if desk.focus != kind {
+                raise(boot, desk, kind);
+            }
+            return Some(resize_grab(desk.rect(kind), px, py, kind, edges));
+        }
         if title_hit(rect, px, py) {
             if desk.focus != kind {
                 raise(boot, desk, kind);
@@ -389,10 +440,27 @@ fn grab_at(rect: Rect, px: u32, py: u32, kind: u8) -> Grab {
         kind,
         dx: px as i32 - rect.x as i32,
         dy: py as i32 - rect.y as i32,
+        edges: 0,
+        x0: rect.x,
+        y0: rect.y,
+        w0: rect.w,
+        h0: rect.h,
+        px0: px as i32,
+        py0: py as i32,
     }
 }
 
+fn resize_grab(rect: Rect, px: u32, py: u32, kind: u8, edges: u8) -> Grab {
+    let mut grab = grab_at(rect, px, py, kind);
+    grab.edges = edges;
+    grab
+}
+
 fn drag_frame(boot: &CompositorBoot, desk: &mut Desktop, drag: Grab, px: u32, py: u32) {
+    if drag.edges != 0 {
+        resize_frame(boot, desk, drag, px, py);
+        return;
+    }
     let rect = desk.rect(drag.kind);
     let (nx, ny) = clamp_frame(
         px as i32 - drag.dx,
@@ -404,6 +472,91 @@ fn drag_frame(boot: &CompositorBoot, desk: &mut Desktop, drag: Grab, px: u32, py
     );
     if nx != rect.x || ny != rect.y {
         move_frame(boot, desk, drag.kind, nx, ny);
+    }
+}
+
+fn resize_frame(boot: &CompositorBoot, desk: &mut Desktop, drag: Grab, px: u32, py: u32) {
+    let (nx, ny, nw, nh) = resize_box(drag, px, py, boot.width, boot.height);
+    let rect = desk.rect(drag.kind);
+    if nx == rect.x && ny == rect.y && nw == rect.w && nh == rect.h {
+        return;
+    }
+    let old = rect;
+    let lifted = begin_edit(boot);
+    fill_outer(boot, old);
+    desk.set_origin(drag.kind, nx, ny);
+    desk.set_size(drag.kind, nw, nh);
+    end_edit(boot, desk, Some(outer(old)), lifted);
+}
+
+fn resize_box(drag: Grab, px: u32, py: u32, limit_w: u32, limit_h: u32) -> (u32, u32, u32, u32) {
+    let dx = px as i32 - drag.px0;
+    let dy = py as i32 - drag.py0;
+    let mut w = drag.w0 as i32;
+    let mut h = drag.h0 as i32;
+    if drag.edges & EDGE_RIGHT != 0 {
+        w += dx;
+    }
+    if drag.edges & EDGE_LEFT != 0 {
+        w -= dx;
+    }
+    if drag.edges & EDGE_BOTTOM != 0 {
+        h += dy;
+    }
+    let right = drag.x0.saturating_add(drag.w0);
+    let max_w = if drag.edges & EDGE_LEFT != 0 {
+        right.saturating_sub(FRAME_BORDER)
+    } else {
+        limit_w.saturating_sub(drag.x0).saturating_sub(FRAME_BORDER)
+    };
+    let max_h = limit_h.saturating_sub(drag.y0).saturating_sub(FRAME_BORDER);
+    let w = clamp_dim(w, MIN_W, max_w);
+    let h = clamp_dim(h, MIN_H, max_h);
+    let x = if drag.edges & EDGE_LEFT != 0 {
+        right.saturating_sub(w)
+    } else {
+        drag.x0
+    };
+    (x, drag.y0, w, h)
+}
+
+fn clamp_dim(value: i32, min: u32, max: u32) -> u32 {
+    let lo = min.min(max.max(1));
+    let hi = max.max(lo);
+    if value < lo as i32 {
+        lo
+    } else if value > hi as i32 {
+        hi
+    } else {
+        value as u32
+    }
+}
+
+fn resize_hit(rect: Rect, px: u32, py: u32) -> Option<u8> {
+    let bounds = outer(rect);
+    if !point_in(bounds, px, py) || py < rect.y {
+        return None;
+    }
+    let left = px < bounds.x.saturating_add(GRIP);
+    let right = px.saturating_add(GRIP) >= bounds.x.saturating_add(bounds.w);
+    let bottom = py.saturating_add(GRIP) >= bounds.y.saturating_add(bounds.h);
+    if left && right {
+        return None;
+    }
+    let mut edges = 0u8;
+    if left {
+        edges |= EDGE_LEFT;
+    }
+    if right {
+        edges |= EDGE_RIGHT;
+    }
+    if bottom {
+        edges |= EDGE_BOTTOM;
+    }
+    if edges == 0 {
+        None
+    } else {
+        Some(edges)
     }
 }
 
@@ -815,7 +968,8 @@ fn blit(boot: &CompositorBoot, packed: u64, desk: &Desktop) {
     if w == 0 || h == 0 {
         return;
     }
-    let (base, stride, origin_x, origin_y, dest_x, dest_y) = if is_term(boot, packed) {
+    let (base, stride, origin_x, origin_y, dest_x, dest_y, limit_w, limit_h) = if is_term(boot, packed)
+    {
         let ox = x - boot.term_x;
         let oy = y - boot.term_y;
         (
@@ -825,6 +979,8 @@ fn blit(boot: &CompositorBoot, packed: u64, desk: &Desktop) {
             oy,
             desk.term_x + ox,
             desk.term_y + oy,
+            desk.term_w,
+            desk.term_h,
         )
     } else if is_files(boot, packed) {
         let ox = x - boot.files_x;
@@ -836,6 +992,8 @@ fn blit(boot: &CompositorBoot, packed: u64, desk: &Desktop) {
             oy,
             desk.files_x + ox,
             desk.files_y + oy,
+            desk.files_w,
+            desk.files_h,
         )
     } else if is_calc(boot, packed) {
         let ox = x - boot.calc_x;
@@ -847,11 +1005,29 @@ fn blit(boot: &CompositorBoot, packed: u64, desk: &Desktop) {
             oy,
             desk.calc_x + ox,
             desk.calc_y + oy,
+            desk.calc_w,
+            desk.calc_h,
         )
     } else {
-        (boot.back, w, 0, 0, x, y)
+        blit_surface(boot, boot.back, w, x, y, w, h, 0, 0);
+        return;
     };
+    if origin_x >= limit_w || origin_y >= limit_h {
+        return;
+    }
+    let w = w.min(limit_w - origin_x);
+    let h = h.min(limit_h - origin_y);
     blit_surface(boot, base, stride, dest_x, dest_y, w, h, origin_x, origin_y);
+    let kind = if is_term(boot, packed) {
+        FOCUS_TERM
+    } else if is_files(boot, packed) {
+        FOCUS_FILES
+    } else {
+        FOCUS_CALC
+    };
+    if desk.is_open(kind) {
+        paint_grip(boot, desk.rect(kind));
+    }
 }
 
 fn blit_windows(boot: &CompositorBoot, desk: &Desktop) {
@@ -861,12 +1037,27 @@ fn blit_windows(boot: &CompositorBoot, desk: &Desktop) {
             continue;
         }
         let rect = desk.rect(kind);
-        let (base, stride) = match kind {
-            FOCUS_FILES => (boot.files, boot.files_stride),
-            FOCUS_CALC => (boot.calc, boot.calc_stride),
-            _ => (boot.term, boot.term_stride),
+        let (base, stride, buf_w, buf_h) = match kind {
+            FOCUS_FILES => (boot.files, boot.files_stride, FILES_PX_W, FILES_PX_H),
+            FOCUS_CALC => (boot.calc, boot.calc_stride, CALC_PX_W, CALC_PX_H),
+            _ => (boot.term, boot.term_stride, TERM_PX_W, TERM_PX_H),
         };
-        blit_surface(boot, base, stride, rect.x, rect.y, rect.w, rect.h, 0, 0);
+        let cw = rect.w.min(buf_w);
+        let ch = rect.h.min(buf_h);
+        blit_surface(boot, base, stride, rect.x, rect.y, cw, ch, 0, 0);
+        if rect.w > cw {
+            fill_rect(
+                boot,
+                rect.x + cw,
+                rect.y,
+                rect.w - cw,
+                rect.h,
+                theme::PANEL,
+            );
+        }
+        if rect.h > ch {
+            fill_rect(boot, rect.x, rect.y + ch, cw, rect.h - ch, theme::PANEL);
+        }
     }
 }
 
@@ -1112,6 +1303,14 @@ fn paint_frame(boot: &CompositorBoot, rect: Rect, title: &[u8], focused: bool) {
     let close_x = bar_x + rect.w - 20;
     fill_rect(boot, close_x, bar_y + 3, 16, 16, CLOSE_RGB);
     draw_text(boot, close_x + 4, bar_y + 7, b"x", 1, 0x00FF_FFFF);
+    paint_grip(boot, rect);
+}
+
+fn paint_grip(boot: &CompositorBoot, rect: Rect) {
+    let x = rect.x + rect.w;
+    let y = rect.y + rect.h;
+    fill_rect(boot, x - 5, y, 5 + FRAME_BORDER, FRAME_BORDER, TITLE_FG);
+    fill_rect(boot, x, y - 5, FRAME_BORDER, 5, TITLE_FG);
 }
 
 fn draw_text(boot: &CompositorBoot, x: u32, y: u32, text: &[u8], scale: u32, rgb: u32) {
